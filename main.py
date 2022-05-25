@@ -6,9 +6,21 @@ import sys
 import json
 import tomli
 
-from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Set
+from typing import (
+    Any,
+    Dict,
+    Generic,
+    Iterable,
+    List,
+    NamedTuple,
+    Optional,
+    Set,
+    TypeVar,
+    Protocol,
+)
 from enum import Enum
 from http.client import HTTPSConnection, HTTPResponse
+from dataclasses import dataclass
 
 
 class OrganizationRole(Enum):
@@ -46,6 +58,20 @@ class Team(NamedTuple):
     description: str
     parent_team_name: Optional[str]
 
+    def format_toml(self) -> str:
+        lines = [
+            "[[team]]",
+            f"github_team_id = {self.team_id}",
+            # Splicing the string is safe here, because GitHub team names are
+            # very restrictive and do not contain quotes.
+            f'name = "{self.name}"',
+            f"description = {json.dumps(self.description)}",
+        ]
+        if self.parent_team_name is not None:
+            lines.append(f"parent = {json.dumps(self.parent_team_name)}")
+
+        return "\n".join(lines)
+
 
 class Organization(NamedTuple):
     name: str
@@ -53,9 +79,7 @@ class Organization(NamedTuple):
 
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> Organization:
-        members = {
-            OrganizationMember.from_toml_dict(m) for m in data["member"]
-        }
+        members = {OrganizationMember.from_toml_dict(m) for m in data["member"]}
         return Organization(
             name=data["organization"]["name"],
             members=members,
@@ -108,18 +132,24 @@ class GithubClient(NamedTuple):
                 return json.load(response)
 
             body = response.read()
-            raise Exception(f"Got {response.status} from {url}: {body}", response)
+            raise Exception(f"Got {response.status} from {url!r}: {body!r}", response)
 
     def get_organization_members(self, org: str) -> Iterable[OrganizationMember]:
         members = self._http_get_json(f"/orgs/{org}/members")
         for i, member in enumerate(members):
             username: str = member["login"]
-            print(f"\r[{i + 1} / {len(members)}] Retrieving membership: {username}", end="", file=sys.stderr)
-            membership: Dict[str, Any] = self._http_get_json(f"/orgs/{org}/memberships/{username}")
+            print(
+                f"\r[{i + 1} / {len(members)}] Retrieving membership: {username}",
+                end="",
+                file=sys.stderr,
+            )
+            membership: Dict[str, Any] = self._http_get_json(
+                f"/orgs/{org}/memberships/{username}"
+            )
             yield OrganizationMember(
                 user_name=username,
                 user_id=member["id"],
-                role=OrganizationRole(membership["role"])
+                role=OrganizationRole(membership["role"]),
             )
 
     def get_organization_teams(self, org: str) -> Iterable[Team]:
@@ -130,19 +160,33 @@ class GithubClient(NamedTuple):
                 team_id=team["id"],
                 name=team["name"],
                 description=team["description"],
-                parent_team_name=parent_team["name"] if parent_team is not None else None,
+                parent_team_name=parent_team["name"]
+                if parent_team is not None
+                else None,
             )
 
 
-class MemberDiff(NamedTuple):
-    members_to_add: List[OrganizationMember]
-    members_to_remove: List[OrganizationMember]
+T = TypeVar("T", bound="Comparable")
+
+
+class Comparable(Protocol):
+    def __eq__(self: T, other: Any) -> bool:
+        ...
+
+    def __lt__(self: T, other: T) -> bool:
+        ...
+
+
+@dataclass(frozen=True)
+class Diff(Generic[T]):
+    to_add: List[T]
+    to_remove: List[T]
 
     @staticmethod
-    def new(target: Set[OrganizationMember], actual: Set[OrganizationMember]) -> MemberDiff:
-        return MemberDiff(
-            members_to_add=sorted(target - actual),
-            members_to_remove=sorted(actual - target),
+    def new(target: Set[T], actual: Set[T]) -> Diff[T]:
+        return Diff(
+            to_add=sorted(target - actual),
+            to_remove=sorted(actual - target),
         )
 
 
@@ -160,24 +204,33 @@ def main() -> None:
     target_org = Organization.from_toml_file(target_fname)
 
     client = GithubClient.new(github_token)
-    for x in client.get_organization_teams(target_org.name):
-        print(x)
+    current_teams = set(client.get_organization_teams(target_org.name))
+
+    print(
+        f"The following teams in the GitHub organization are not specified in {target_fname}:"
+    )
+    for team in current_teams:
+        print("\n" + team.format_toml())
 
     sys.exit(1)
 
     current_members = set(client.get_organization_members(target_org.name))
 
-    diff = MemberDiff.new(target=target_org.members, actual=current_members)
-    if len(diff.members_to_add) > 0:
-        print(f"The following members are specified in {target_fname} but not a member of the GitHub organization:")
-        for member in diff.members_to_add:
+    diff = Diff.new(target=target_org.members, actual=current_members)
+    if len(diff.to_add) > 0:
+        print(
+            f"The following members are specified in {target_fname} but not a member of the GitHub organization:"
+        )
+        for member in diff.to_add:
             print("\n" + member.format_toml())
 
         print()
 
-    if len(diff.members_to_remove) > 0:
-        print(f"The following members of the GitHub organization are not specified in {target_fname}:")
-        for member in diff.members_to_remove:
+    if len(diff.to_remove) > 0:
+        print(
+            f"The following members of the GitHub organization are not specified in {target_fname}:"
+        )
+        for member in diff.to_remove:
             print("\n" + member.format_toml())
 
         print()
