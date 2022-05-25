@@ -6,7 +6,7 @@ import sys
 import json
 import tomli
 
-from typing import Any, Dict, Iterable, List, NamedTuple, Set
+from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Set
 from enum import Enum
 from http.client import HTTPSConnection, HTTPResponse
 
@@ -38,6 +38,13 @@ class OrganizationMember(NamedTuple):
             f'github_user_name = "{self.user_name}"\n'
             f'role = "{self.role.value}"'
         )
+
+
+class Team(NamedTuple):
+    team_id: str
+    name: str
+    description: str
+    parent_team_name: Optional[str]
 
 
 class Organization(NamedTuple):
@@ -115,6 +122,17 @@ class GithubClient(NamedTuple):
                 role=OrganizationRole(membership["role"])
             )
 
+    def get_organization_teams(self, org: str) -> Iterable[Team]:
+        teams = self._http_get_json(f"/orgs/{org}/teams")
+        for team in teams:
+            parent_team = team["parent"]
+            yield Team(
+                team_id=team["id"],
+                name=team["name"],
+                description=team["description"],
+                parent_team_name=parent_team["name"] if parent_team is not None else None,
+            )
+
 
 class MemberDiff(NamedTuple):
     members_to_add: List[OrganizationMember]
@@ -140,9 +158,13 @@ def main() -> None:
 
     target_fname = sys.argv[1]
     target_org = Organization.from_toml_file(target_fname)
-    print(target_org)
 
     client = GithubClient.new(github_token)
+    for x in client.get_organization_teams(target_org.name):
+        print(x)
+
+    sys.exit(1)
+
     current_members = set(client.get_organization_members(target_org.name))
 
     diff = MemberDiff.new(target=target_org.members, actual=current_members)
