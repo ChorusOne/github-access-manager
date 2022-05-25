@@ -5,9 +5,20 @@ import os
 import sys
 import json
 
-from typing import Any, Dict, NamedTuple
+from typing import Any, Dict, Iterable, NamedTuple
 from enum import Enum
 from http.client import HTTPSConnection, HTTPResponse
+
+
+class OrganizationRole(Enum):
+    ADMIN = "admin"
+    MEMBER = "member"
+
+
+class OrganizationMember(NamedTuple):
+    user_id: int
+    user_name: str
+    role: OrganizationRole
 
 
 class GithubClient(NamedTuple):
@@ -36,26 +47,31 @@ class GithubClient(NamedTuple):
                 "User-Agent": "Github Access Manager",
             },
         )
+        # TODO: Respect these response headers
+        # X-RateLimit-Limit: 5000
+        # X-RateLimit-Remaining: 4994
+        # X-RateLimit-Reset: 1653495296
+        # X-RateLimit-Used: 6
+        # X-RateLimit-Resource: core
         return self.connection.getresponse()
 
-    def _http_get_json(self, url: str) -> Dict[str, Any]:
+    def _http_get_json(self, url: str) -> Any:
         with self._http_get(url) as response:
-            if response.status != 200:
-                body = response.read()
-                raise Exception(f"Got {response.status} from {url}: {body}", response)
+            if 200 <= response.status < 300:
+                return json.load(response)
 
-            return json.load(response)
+            body = response.read()
+            raise Exception(f"Got {response.status} from {url}: {body}", response)
 
-
-class OrganizationRole(Enum):
-    ADMIN = "admin"
-    MEMBER = "member"
-
-
-class OrganizationMember(NamedTuple):
-    user_id: int
-    user_name: str
-    role: OrganizationRole
+    def get_organization_members(self, org: str) -> Iterable[OrganizationMember]:
+        for member in self._http_get_json(f"/orgs/{org}/members"):
+            username: str = member["login"]
+            membership: Dict[str, Any] = self._http_get_json(f"/orgs/{org}/memberships/{username}")
+            yield OrganizationMember(
+                user_name=username,
+                user_id=member["id"],
+                role=OrganizationRole(membership["role"])
+            )
 
 
 def main() -> None:
@@ -65,7 +81,8 @@ def main() -> None:
         sys.exit(1)
 
     client = GithubClient.new(github_token)
-    print(client._http_get_json("/orgs/ChorusOne/members"))
+    for member in client.get_organization_members("ChorusOne"):
+        print(member)
 
 
 if __name__ == "__main__":
