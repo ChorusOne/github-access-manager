@@ -35,6 +35,9 @@ organization. The format is as follows.
     # Name of the team. In this example, you can mention the team with
     # '@acme-co/developers'.
     name = "developers"
+    # Known after creating the team.
+    github_team_id = 9999
+    description = "All developers"
 
     # Optionally, if this team should be nested under a parent team,
     # the name of the parent. For top-level teams, this key can be omitted.
@@ -85,6 +88,9 @@ class OrganizationMember(NamedTuple):
     user_name: str
     role: OrganizationRole
 
+    def get_id(self) -> int:
+        return self.user_id
+
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> OrganizationMember:
         return OrganizationMember(
@@ -105,10 +111,22 @@ class OrganizationMember(NamedTuple):
 
 
 class Team(NamedTuple):
-    team_id: str
+    team_id: int
     name: str
     description: str
     parent_team_name: Optional[str]
+
+    def get_id(self) -> int:
+        return self.team_id
+
+    @staticmethod
+    def from_toml_dict(data: Dict[str, Any]) -> Team:
+        return Team(
+            team_id=data.get("github_team_id", 0),
+            name=data["name"],
+            description=data.get("description", ""),
+            parent_team_name=data.get("parent", None),
+        )
 
     def format_toml(self) -> str:
         lines = [
@@ -128,13 +146,16 @@ class Team(NamedTuple):
 class Organization(NamedTuple):
     name: str
     members: Set[OrganizationMember]
+    teams: Set[Team]
 
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> Organization:
         members = {OrganizationMember.from_toml_dict(m) for m in data["member"]}
+        teams = {Team.from_toml_dict(m) for m in data["team"]}
         return Organization(
             name=data["organization"]["name"],
             members=members,
+            teams=teams,
         )
 
     @staticmethod
@@ -218,28 +239,98 @@ class GithubClient(NamedTuple):
             )
 
 
-T = TypeVar("T", bound="Comparable")
+T = TypeVar("T", bound="Diffable")
 
 
-class Comparable(Protocol):
+class Diffable(Protocol):
     def __eq__(self: T, other: Any) -> bool:
         ...
 
     def __lt__(self: T, other: T) -> bool:
         ...
 
+    def get_id(self: T) -> int:
+        ...
+
+    def format_toml(self: T) -> str:
+        ...
+
+
+@dataclass(frozen=True)
+class DiffEntry(Generic[T]):
+    actual: T
+    target: T
+
 
 @dataclass(frozen=True)
 class Diff(Generic[T]):
     to_add: List[T]
     to_remove: List[T]
+    to_change: List[DiffEntry[T]]
 
     @staticmethod
     def new(target: Set[T], actual: Set[T]) -> Diff[T]:
+        # A very basic diff is to just look at everything that needs to be added
+        # and removed, without deeper inspection.
+        to_add = sorted(target - actual)
+        to_remove = sorted(actual - target)
+
+        # However, that produces a very rough diff. If we change e.g. the
+        # description of a team, that would show up as deleting one team and
+        # adding back another which is almost the same, except with a different
+        # description. So to improve on this a bit, if entries have ids, and
+        # the same id needs to be both added and removed, then instead we record
+        # that as a "change".
+        to_add_by_id = {x.get_id(): x for x in to_add}
+        to_remove_by_id = {x.get_id(): x for x in to_remove}
+        to_change = [
+            DiffEntry(
+                actual=to_remove_by_id[id_],
+                target=to_add_by_id[id_],
+            )
+            for id_ in sorted(to_add_by_id.keys() & to_remove_by_id.keys())
+        ]
+
+        # Now that we turned some add/remove pairs into a "change", we should no
+        # longer count those as added/removed.
+        for change in to_change:
+            to_add.remove(change.target)
+            to_remove.remove(change.actual)
+
         return Diff(
-            to_add=sorted(target - actual),
-            to_remove=sorted(actual - target),
+            to_add=to_add,
+            to_remove=to_remove,
+            to_change=to_change,
         )
+
+    def print_diff(
+        self,
+        header_to_add: str,
+        header_to_remove: str,
+        header_to_change: str,
+    ) -> None:
+        if len(self.to_add) > 0:
+            print(header_to_add)
+            for entry in self.to_add:
+                print("\n" + entry.format_toml())
+
+            print()
+
+        if len(self.to_remove) > 0:
+            print(header_to_remove)
+            for entry in self.to_remove:
+                print("\n" + entry.format_toml())
+
+            print()
+
+        if len(self.to_change) > 0:
+            print(header_to_change)
+            for change in self.to_change:
+                # TODO: Print a line-based diff.
+                print("\n" + "---\n" + change.actual.format_toml())
+                print("\n" + "+++\n" + change.target.format_toml())
+
+            print()
 
 
 def main() -> None:
@@ -264,11 +355,15 @@ def main() -> None:
     client = GithubClient.new(github_token)
     current_teams = set(client.get_organization_teams(target_org.name))
 
-    print(
-        f"The following teams in the GitHub organization are not specified in {target_fname}:"
+    teams_diff = Diff.new(
+        target=target_org.teams,
+        actual=current_teams,
     )
-    for team in current_teams:
-        print("\n" + team.format_toml())
+    teams_diff.print_diff(
+        f"The following teams specified in {target_fname} are not present on GitHub:",
+        f"The following teams in the GitHub organization are not specified in {target_fname}:",
+        f"The following teams on GitHub need to be changed to match {target_fname}:",
+    )
 
     sys.exit(1)
 
