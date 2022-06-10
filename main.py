@@ -74,6 +74,7 @@ from typing import (
     Protocol,
 )
 from enum import Enum
+from difflib import SequenceMatcher
 from http.client import HTTPSConnection, HTTPResponse
 from dataclasses import dataclass
 
@@ -239,6 +240,29 @@ class GithubClient(NamedTuple):
             )
 
 
+def print_simple_diff(actual: str, target: str) -> None:
+    lines_actual = actual.splitlines()
+    lines_target = target.splitlines()
+    line_diff = SequenceMatcher(None, lines_actual, lines_target)
+    for tag, i1, i2, j1, j2 in line_diff.get_opcodes():
+        if tag == "equal":
+            for line in lines_actual[i1:i2]:
+                print("  " + line)
+        elif tag == "replace":
+            for line in lines_actual[i1:i2]:
+                print("- " + line)
+            for line in lines_target[j1:j2]:
+                print("+ " + line)
+        elif tag == "delete":
+            for line in lines_actual[i1:i2]:
+                print("- " + line)
+        elif tag == "insert":
+            for line in lines_target[j1:j2]:
+                print("+ " + line)
+        else:
+            raise Exception("Invalid diff operation.")
+
+
 T = TypeVar("T", bound="Diffable")
 
 
@@ -326,9 +350,11 @@ class Diff(Generic[T]):
         if len(self.to_change) > 0:
             print(header_to_change)
             for change in self.to_change:
-                # TODO: Print a line-based diff.
-                print("\n" + "---\n" + change.actual.format_toml())
-                print("\n" + "+++\n" + change.target.format_toml())
+                print()
+                print_simple_diff(
+                    actual=change.actual.format_toml(),
+                    target=change.target.format_toml(),
+                )
 
             print()
 
