@@ -41,7 +41,7 @@ organization. The format is as follows.
 
     # Optionally, if this team should be nested under a parent team,
     # the name of the parent. For top-level teams, this key can be omitted.
-    parent = "tech"
+    parent = "humans"
 
     [[member]]
     # Because usernames can be changed, we identify GitHub users by id.
@@ -51,7 +51,13 @@ organization. The format is as follows.
     github_user_name = "octocat"
 
     # Role in the organization is either "member" or "admin".
-    role = "member"
+    organization_role = "member"
+
+    # A list of teams that this user should be a member of. In the case of
+    # nested teams, it is possible to specify memberships at all levels
+    # separately, although GitHub’s behavior is that members of the child team
+    # are already considered members of the parent team anyway.
+    teams = ["developers"]
 """
 
 from __future__ import annotations
@@ -97,7 +103,7 @@ class OrganizationMember(NamedTuple):
         return OrganizationMember(
             user_id=data["github_user_id"],
             user_name=data["github_user_name"],
-            role=OrganizationRole(data["role"]),
+            role=OrganizationRole(data["organization_role"]),
         )
 
     def format_toml(self) -> str:
@@ -148,15 +154,26 @@ class Organization(NamedTuple):
     name: str
     members: Set[OrganizationMember]
     teams: Set[Team]
+    team_memberships: Set[TeamMember]
 
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> Organization:
         members = {OrganizationMember.from_toml_dict(m) for m in data["member"]}
         teams = {Team.from_toml_dict(m) for m in data["team"]}
+        team_memberships = {
+            TeamMember(
+                user_id=user["github_user_id"],
+                user_name=user["github_user_name"],
+                team_name=team,
+            )
+            for user in data["member"]
+            for team in user.get("teams", [])
+        }
         return Organization(
             name=data["organization"]["name"],
             members=members,
             teams=teams,
+            team_memberships=team_memberships,
         )
 
     @staticmethod
@@ -164,6 +181,12 @@ class Organization(NamedTuple):
         with open(fname, "r", encoding="utf-8") as f:
             data = tomli.load(f)
             return Organization.from_toml_dict(data)
+
+
+class TeamMember(NamedTuple):
+    user_id: int
+    user_name: str
+    team_name: str
 
 
 class GithubClient(NamedTuple):
@@ -223,7 +246,7 @@ class GithubClient(NamedTuple):
             yield OrganizationMember(
                 user_name=username,
                 user_id=member["id"],
-                role=OrganizationRole(membership["role"]),
+                role=OrganizationRole(membership["organization_role"]),
             )
 
     def get_organization_teams(self, org: str) -> Iterable[Team]:
@@ -377,6 +400,11 @@ def main() -> None:
 
     target_fname = sys.argv[1]
     target_org = Organization.from_toml_file(target_fname)
+
+    for x in sorted(target_org.team_memberships):
+        print(x)
+
+    sys.exit(1)
 
     client = GithubClient.new(github_token)
     current_teams = set(client.get_organization_teams(target_org.name))
