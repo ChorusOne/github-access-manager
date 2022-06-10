@@ -1,4 +1,56 @@
 #!/usr/bin/env python3
+
+"""
+Github Access Manager
+
+Comare the current state of a GitHub organization against a declarative
+specification of the target state. Currently this tool only points out the
+differences, it does not automatically reconcile them for you.
+
+USAGE
+
+    ./main.py org.toml
+
+ENVIRONMENT
+
+Requires GITHUB_TOKEN to be set in the environment. This must contain a personal
+access token that has "read:org" permission (listed under "admin:org", but the
+parent permission is not needed). You can generate a new token at
+https://github.com/settings/tokens.
+
+CONFIGURATION
+
+The input file is a toml file that describes the target state of the GitHub
+organization. The format is as follows.
+
+    [organization]
+    # GitHub organization to target.
+    name = "acme-co"
+
+    # TODO: Document.
+    repository_base_permission = "read"
+    repository_write_access_team = "tech"
+
+    [[team]]
+    # Name of the team. In this example, you can mention the team with
+    # '@acme-co/developers'.
+    name = "developers"
+
+    # Optionally, if this team should be nested under a parent team,
+    # the name of the parent. For top-level teams, this key can be omitted.
+    parent = "tech"
+
+    [[member]]
+    # Because usernames can be changed, we identify GitHub users by id.
+    # One easy way to get a user's id is to look at the url of their avatar,
+    # it's of the form "https://avatars.githubusercontent.com/u/«user-id»?v=4".
+    github_user_id = 583231
+    github_user_name = "octocat"
+
+    # Role in the organization is either "member" or "admin".
+    role = "member"
+"""
+
 from __future__ import annotations
 
 import os
@@ -191,13 +243,19 @@ class Diff(Generic[T]):
 
 
 def main() -> None:
+    if "--help" in sys.argv:
+        print(__doc__)
+        sys.exit(0)
+
     github_token = os.getenv("GITHUB_TOKEN")
     if github_token is None:
         print("Expected GITHUB_TOKEN environment variable to be set.")
+        print("See also --help.")
         sys.exit(1)
 
     if len(sys.argv) < 2:
         print("Expected file name of config toml as first argument.")
+        print("See also --help.")
         sys.exit(1)
 
     target_fname = sys.argv[1]
