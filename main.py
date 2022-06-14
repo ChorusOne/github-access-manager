@@ -210,7 +210,7 @@ class TeamMember(NamedTuple):
         # for pairs with the same id, but this does not apply to memberships,
         # which do not themselves have an id, so the identity to group on is
         # the value itself.
-        return f'{self.user_id}@{self.team_name}'
+        return f"{self.user_id}@{self.team_name}"
 
     def format_toml(self) -> str:
         # Needed to satisfy Diffable, but not used in this case.
@@ -513,14 +513,19 @@ def main() -> None:
     # compare their members. When requesting the members, we pass in the actual
     # team, not the target team, because the endpoint needs the actual slug.
     target_team_names = {team.name for team in target_org.teams}
-    existing_desired_teams = [team for team in current_teams if team.name in target_team_names]
+    existing_desired_teams = [
+        team for team in current_teams if team.name in target_team_names
+    ]
     for team in existing_desired_teams:
         print_team_members_diff(
             team_name=team.name,
             target_fname=target_fname,
-            target_members={m for m in target_org.team_memberships if m.team_name == team.name},
+            target_members={
+                m for m in target_org.team_memberships if m.team_name == team.name
+            },
             actual_members=set(client.get_team_members(target_org.name, team)),
         )
+
 
 if __name__ == "__main__":
     main()
