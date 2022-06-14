@@ -205,6 +205,20 @@ class TeamMember(NamedTuple):
     user_name: str
     team_name: str
 
+    def get_id(self) -> str:
+        # Our generic differ has the ability to turn add/removes into changes
+        # for pairs with the same id, but this does not apply to memberships,
+        # which do not themselves have an id, so the identity to group on is
+        # the value itself.
+        return f'{self.user_id}@{self.team_name}'
+
+    def format_toml(self) -> str:
+        # Needed to satisfy Diffable, but not used in this case.
+        raise Exception(
+            "Team memberships are not expressed in toml, "
+            "please print the diffs in some other way."
+        )
+
 
 class GithubClient(NamedTuple):
     connection: HTTPSConnection
@@ -324,7 +338,7 @@ class Diffable(Protocol):
     def __lt__(self: T, other: T) -> bool:
         ...
 
-    def get_id(self: T) -> int:
+    def get_id(self: T) -> int | str:
         ...
 
     def format_toml(self: T) -> str:
@@ -446,13 +460,32 @@ def main() -> None:
     )
 
     # For all the teams which we want to exist, and which do actually exist,
-    # compare their members.
+    # compare their members. When requesting the members, we pass in the actual
+    # team, not the target team, because the endpoint needs the actual slug.
     target_team_names = {team.name for team in target_org.teams}
     existing_desired_teams = [team for team in current_teams if team.name in target_team_names]
     for team in existing_desired_teams:
-        print(f"Team {team.name} existing members:")
-        for member in client.get_team_members(target_org.name, team):
-            print(f" - {member}")
+        members_diff = Diff.new(
+            target={m for m in target_org.team_memberships if m.team_name == team.name},
+            actual=set(client.get_team_members(target_org.name, team)),
+        )
+        if len(members_diff.to_remove) > 0:
+            print(
+                f"The following members of team '{team.name}' are not specified "
+                f"in {target_fname}, but are present on GitHub:\n"
+            )
+            for member in sorted(members_diff.to_remove):
+                print(f"  {member.user_name}")
+            print()
+
+        if len(members_diff.to_add) > 0:
+            print(
+                f"The following members of team '{team.name}' are not members "
+                f"on GitHub, but are specified in {target_fname}:\n"
+            )
+            for member in sorted(members_diff.to_add):
+                print(f"  {member.user_name}")
+            print()
 
     sys.exit(1)
 
