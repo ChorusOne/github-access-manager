@@ -263,11 +263,13 @@ class GithubClient(NamedTuple):
             raise Exception(f"Got {response.status} from {url!r}: {body!r}", response)
 
     def get_organization_members(self, org: str) -> Iterable[OrganizationMember]:
+        # TODO: Deal with pagination.
         members = self._http_get_json(f"/orgs/{org}/members")
         for i, member in enumerate(members):
             username: str = member["login"]
+            clear_line = "\x1b[2K\r"
             print(
-                f"\r[{i + 1} / {len(members)}] Retrieving membership: {username}",
+                f"{clear_line}[{i + 1} / {len(members)}] Retrieving membership: {username}",
                 end="",
                 file=sys.stderr,
             )
@@ -277,8 +279,12 @@ class GithubClient(NamedTuple):
             yield OrganizationMember(
                 user_name=username,
                 user_id=member["id"],
-                role=OrganizationRole(membership["organization_role"]),
+                role=OrganizationRole(membership["role"]),
             )
+
+        # After the final status update, do put a newline on stderr. This means
+        # that the final status update will remain visible.
+        print("", file=sys.stderr)
 
     def get_organization_teams(self, org: str) -> Iterable[Team]:
         teams = self._http_get_json(f"/orgs/{org}/teams")
@@ -305,7 +311,17 @@ class GithubClient(NamedTuple):
             )
 
 
+def print_indented(lines: str) -> None:
+    """Print the input indented by two spaces."""
+    for line in lines.splitlines():
+        print(f"  {line}")
+
+
 def print_simple_diff(actual: str, target: str) -> None:
+    """
+    Print a line-based diff of the two strings, without abbreviating large
+    chunks of identical lines like a standard unified diff would do.
+    """
     lines_actual = actual.splitlines()
     lines_target = target.splitlines()
     line_diff = SequenceMatcher(None, lines_actual, lines_target)
@@ -401,14 +417,16 @@ class Diff(Generic[T]):
         if len(self.to_add) > 0:
             print(header_to_add)
             for entry in self.to_add:
-                print("\n" + entry.format_toml())
+                print()
+                print_indented(entry.format_toml())
 
             print()
 
         if len(self.to_remove) > 0:
             print(header_to_remove)
             for entry in self.to_remove:
-                print("\n" + entry.format_toml())
+                print()
+                print_indented(entry.format_toml())
 
             print()
 
@@ -422,6 +440,36 @@ class Diff(Generic[T]):
                 )
 
             print()
+
+
+def print_team_members_diff(
+    *,
+    team_name: str,
+    target_fname: str,
+    target_members: Set[TeamMember],
+    actual_members: Set[TeamMember],
+) -> None:
+    members_diff = Diff.new(
+        target=target_members,
+        actual=actual_members,
+    )
+    if len(members_diff.to_remove) > 0:
+        print(
+            f"The following members of team '{team_name}' are not specified "
+            f"in {target_fname}, but are present on GitHub:\n"
+        )
+        for member in sorted(members_diff.to_remove):
+            print(f"  {member.user_name}")
+        print()
+
+    if len(members_diff.to_add) > 0:
+        print(
+            f"The following members of team '{team_name}' are not members "
+            f"on GitHub, but are specified in {target_fname}:\n"
+        )
+        for member in sorted(members_diff.to_add):
+            print(f"  {member.user_name}")
+        print()
 
 
 def main() -> None:
@@ -443,16 +491,18 @@ def main() -> None:
     target_fname = sys.argv[1]
     target_org = Organization.from_toml_file(target_fname)
 
-    for x in sorted(target_org.team_memberships):
-        print(x)
-
     client = GithubClient.new(github_token)
-    current_teams = set(client.get_organization_teams(target_org.name))
 
-    teams_diff = Diff.new(
-        target=target_org.teams,
-        actual=current_teams,
+    current_members = set(client.get_organization_members(target_org.name))
+    members_diff = Diff.new(target=target_org.members, actual=current_members)
+    members_diff.print_diff(
+        f"The following members are specified in {target_fname} but not a member of the GitHub organization:",
+        f"The following members of the GitHub organization are not specified in {target_fname}:",
+        f"The following members on GitHub need to be changed to match {target_fname}:",
     )
+
+    current_teams = set(client.get_organization_teams(target_org.name))
+    teams_diff = Diff.new(target=target_org.teams, actual=current_teams)
     teams_diff.print_diff(
         f"The following teams specified in {target_fname} are not present on GitHub:",
         f"The following teams in the GitHub organization are not specified in {target_fname}:",
@@ -465,51 +515,12 @@ def main() -> None:
     target_team_names = {team.name for team in target_org.teams}
     existing_desired_teams = [team for team in current_teams if team.name in target_team_names]
     for team in existing_desired_teams:
-        members_diff = Diff.new(
-            target={m for m in target_org.team_memberships if m.team_name == team.name},
-            actual=set(client.get_team_members(target_org.name, team)),
+        print_team_members_diff(
+            team_name=team.name,
+            target_fname=target_fname,
+            target_members={m for m in target_org.team_memberships if m.team_name == team.name},
+            actual_members=set(client.get_team_members(target_org.name, team)),
         )
-        if len(members_diff.to_remove) > 0:
-            print(
-                f"The following members of team '{team.name}' are not specified "
-                f"in {target_fname}, but are present on GitHub:\n"
-            )
-            for member in sorted(members_diff.to_remove):
-                print(f"  {member.user_name}")
-            print()
-
-        if len(members_diff.to_add) > 0:
-            print(
-                f"The following members of team '{team.name}' are not members "
-                f"on GitHub, but are specified in {target_fname}:\n"
-            )
-            for member in sorted(members_diff.to_add):
-                print(f"  {member.user_name}")
-            print()
-
-    sys.exit(1)
-
-    current_members = set(client.get_organization_members(target_org.name))
-
-    diff = Diff.new(target=target_org.members, actual=current_members)
-    if len(diff.to_add) > 0:
-        print(
-            f"The following members are specified in {target_fname} but not a member of the GitHub organization:"
-        )
-        for member in diff.to_add:
-            print("\n" + member.format_toml())
-
-        print()
-
-    if len(diff.to_remove) > 0:
-        print(
-            f"The following members of the GitHub organization are not specified in {target_fname}:"
-        )
-        for member in diff.to_remove:
-            print("\n" + member.format_toml())
-
-        print()
-
 
 if __name__ == "__main__":
     main()
