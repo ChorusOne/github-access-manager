@@ -220,6 +220,44 @@ class TeamMember(NamedTuple):
         )
 
 
+def parse_link_header(contents: str) -> Dict[str, str]:
+    """
+    Parse a Link header like
+
+        Link: <https://api.example/?page=2>; rel="next", <https://api.example/?page=3>; rel="last"
+
+    into a dict like
+
+    {
+        "next": "https://api.example/?page=2",
+        "last": "https://api.example/?page=3",
+    }
+    """
+    # This is probably not fully general for *any* Link header, but we only need
+    # to parse the ones that GitHub returns to us.
+    result: Dict[str, str] = {}
+    for link in contents.split(","):
+        if link == "":
+            continue
+
+        url, rel = link.split(";", maxsplit=1)
+        url, rel = url.strip(), rel.strip()
+
+        # Strip off the "decorations", the <> around the url, and quotes around
+        # the rel="...". If they are not as expected, crash the program. With
+        # arbitrary inputs that would be a bad idea, but we are only trying to
+        # parse headers from GitHub's API here.
+        assert url[0] == "<" and url[-1] == ">"
+        assert rel[:4] == "rel="
+        url = url[1:-1]
+        rel = rel[4:]
+        assert rel[0] == '"' and rel[-1] == '"'
+        rel = rel[1:-1]
+        result[rel] = url
+
+    return result
+
+
 class GithubClient(NamedTuple):
     connection: HTTPSConnection
     github_token: str
@@ -262,9 +300,36 @@ class GithubClient(NamedTuple):
             body = response.read()
             raise Exception(f"Got {response.status} from {url!r}: {body!r}", response)
 
+    def _http_get_json_paginated(self, url: str) -> Iterable[Any]:
+        next_url = url
+
+        while True:
+            with self._http_get(next_url) as response:
+                if 200 <= response.status < 300:
+                    links = parse_link_header(response.headers.get("link", ""))
+                    items: List[Any] = json.load(response)
+                    # Yield items separately, so the caller does not have to
+                    # flatten the iterable of lists.
+                    yield from items
+
+                    # GitHub provides pagination links in the response headers.
+                    # If there is more to fetch, there will be a rel="next"
+                    # link to follow.
+                    if "next" in links:
+                        next_url = links["next"]
+                        continue
+                    else:
+                        break
+
+                body = response.read()
+                raise Exception(
+                    f"Got {response.status} from {next_url!r}: {body!r}", response
+                )
+
     def get_organization_members(self, org: str) -> Iterable[OrganizationMember]:
-        # TODO: Deal with pagination.
-        members = self._http_get_json(f"/orgs/{org}/members")
+        # Collect the members into a list first, so we can show an accurate
+        # progress meter later.
+        members = list(self._http_get_json_paginated(f"/orgs/{org}/members"))
         for i, member in enumerate(members):
             username: str = member["login"]
             clear_line = "\x1b[2K\r"
@@ -287,7 +352,7 @@ class GithubClient(NamedTuple):
         print("", file=sys.stderr)
 
     def get_organization_teams(self, org: str) -> Iterable[Team]:
-        teams = self._http_get_json(f"/orgs/{org}/teams")
+        teams = self._http_get_json_paginated(f"/orgs/{org}/teams")
         for team in teams:
             parent_team = team["parent"]
             yield Team(
@@ -301,8 +366,9 @@ class GithubClient(NamedTuple):
             )
 
     def get_team_members(self, org: str, team: Team) -> Iterable[TeamMember]:
-        # TODO: This endpoint is paginated, deal with requesting multiple pages.
-        members = self._http_get_json(f"/orgs/{org}/teams/{team.slug}/members")
+        members = self._http_get_json_paginated(
+            f"/orgs/{org}/teams/{team.slug}/members"
+        )
         for member in members:
             yield TeamMember(
                 user_name=member["login"],
