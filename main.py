@@ -18,6 +18,15 @@ access token that has "read:org" permission (listed under "admin:org", but the
 parent permission is not needed). You can generate a new token at
 https://github.com/settings/tokens.
 
+ASSUMPTIONS
+
+A tool that is so flexible that it supports any kind of set-up, is necessarily
+difficult to configure. Therefore this tool is opinionated about how teams and
+repository access should be set up. It makes the following assumptions:
+
+ * All team members have the normal "member" role in that team, nobody has the
+   "maintainer" role — organization admins can modify team membership already.
+
 CONFIGURATION
 
 The input file is a toml file that describes the target state of the GitHub
@@ -120,6 +129,7 @@ class OrganizationMember(NamedTuple):
 class Team(NamedTuple):
     team_id: int
     name: str
+    slug: str
     description: str
     parent_team_name: Optional[str]
 
@@ -131,6 +141,9 @@ class Team(NamedTuple):
         return Team(
             team_id=data.get("github_team_id", 0),
             name=data["name"],
+            # By default if not specified, the team slug should be equal to its
+            # name.
+            slug=data.get("slug", data["name"]),
             description=data.get("description", ""),
             parent_team_name=data.get("parent", None),
         )
@@ -139,11 +152,15 @@ class Team(NamedTuple):
         lines = [
             "[[team]]",
             f"github_team_id = {self.team_id}",
-            # Splicing the string is safe here, because GitHub team names are
-            # very restrictive and do not contain quotes.
-            f'name = "{self.name}"',
-            f"description = {json.dumps(self.description)}",
+            "name = " + json.dumps(self.name),
         ]
+
+        # The slug defaults to the team name, only list it if they differ.
+        if self.slug != self.name:
+            lines.append("slug = " + json.dumps(self.slug))
+
+        lines.append("description = " + json.dumps(self.description))
+
         if self.parent_team_name is not None:
             lines.append(f"parent = {json.dumps(self.parent_team_name)}")
 
@@ -256,10 +273,21 @@ class GithubClient(NamedTuple):
             yield Team(
                 team_id=team["id"],
                 name=team["name"],
+                slug=team["slug"],
                 description=team["description"],
                 parent_team_name=parent_team["name"]
                 if parent_team is not None
                 else None,
+            )
+
+    def get_team_members(self, org: str, team: Team) -> Iterable[TeamMember]:
+        # TODO: This endpoint is paginated, deal with requesting multiple pages.
+        members = self._http_get_json(f"/orgs/{org}/teams/{team.slug}/members")
+        for member in members:
+            yield TeamMember(
+                user_name=member["login"],
+                user_id=member["id"],
+                team_name=team.name,
             )
 
 
@@ -404,8 +432,6 @@ def main() -> None:
     for x in sorted(target_org.team_memberships):
         print(x)
 
-    sys.exit(1)
-
     client = GithubClient.new(github_token)
     current_teams = set(client.get_organization_teams(target_org.name))
 
@@ -418,6 +444,15 @@ def main() -> None:
         f"The following teams in the GitHub organization are not specified in {target_fname}:",
         f"The following teams on GitHub need to be changed to match {target_fname}:",
     )
+
+    # For all the teams which we want to exist, and which do actually exist,
+    # compare their members.
+    target_team_names = {team.name for team in target_org.teams}
+    existing_desired_teams = [team for team in current_teams if team.name in target_team_names]
+    for team in existing_desired_teams:
+        print(f"Team {team.name} existing members:")
+        for member in client.get_team_members(target_org.name, team):
+            print(f" - {member}")
 
     sys.exit(1)
 
