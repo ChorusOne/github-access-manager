@@ -14,11 +14,17 @@ USAGE
 ENVIRONMENT
 
 Requires GITHUB_TOKEN to be set in the environment. This must contain a personal
-access token that has "admin:org" permission, which when checked implies both
-"read:org" and "write:org". This application does not modify the organization,
-but some organization-wide settings, such as the default repository permission,
-can only be read with "admin:org" permission, and not with "read:org". You can
-generate a new token at https://github.com/settings/tokens.
+access token that has the following permissions:
+
+ * "admin:org", which when checked implies both "read:org" and "write:org".
+   This application does not modify the organization, but some organization-wide
+   settings, such as the default repository permission, can only be read with
+   the full "admin:org" permission, and not with "read:org".
+
+ * "repo", which implies various subpermissions. This is needed to list private
+   repositories within the organization.
+
+You can generate a new token at https://github.com/settings/tokens.
 
 ASSUMPTIONS
 
@@ -70,6 +76,20 @@ organization. The format is as follows.
     # separately, although GitHub’s behavior is that members of the child team
     # are already considered members of the parent team anyway.
     teams = ["developers"]
+
+    [[repository]]
+    repo_id = 1
+    name = "oktokit"
+
+    # One of "private" or "public".
+    visibility = "public"
+
+    # All organization repositories that do not have an explicit [[repository]]
+    # entry in this file, are compared against the default settings. This
+    # section supports the same keys as [[repository]], with the exception of
+    # "repo_id" and "name".
+    [repository_default]
+    visibility = "private"
 """
 
 from __future__ import annotations
@@ -107,6 +127,11 @@ class RepositoryPermission(Enum):
     READ = "read"
     WRITE = "write"
     ADMIN = "admin"
+
+
+class RepositoryVisibility(Enum):
+    PRIVATE = "private"
+    PUBLIC = "public"
 
 
 class OrganizationMember(NamedTuple):
@@ -208,6 +233,8 @@ class Configuration(NamedTuple):
     members: Set[OrganizationMember]
     teams: Set[Team]
     team_memberships: Set[TeamMember]
+    default_repo_settings: Repository
+    repos_by_id: Dict[int, Repository]
 
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> Configuration:
@@ -223,11 +250,16 @@ class Configuration(NamedTuple):
             for user in data["member"]
             for team in user.get("teams", [])
         }
+        default_repo_settings = Repository.from_toml_dict(data["repository_default"])
+        repos = (Repository.from_toml_dict(r) for r in data["repository"])
+        repos_by_id = {r.repo_id: r for r in repos}
         return Configuration(
             organization=org,
             members=members,
             teams=teams,
             team_memberships=team_memberships,
+            default_repo_settings=default_repo_settings,
+            repos_by_id=repos_by_id,
         )
 
     @staticmethod
@@ -235,6 +267,21 @@ class Configuration(NamedTuple):
         with open(fname, "r", encoding="utf-8") as f:
             data = tomli.load(f)
             return Configuration.from_toml_dict(data)
+
+    def get_repository_target(self, actual: Repository) -> Repository:
+        """
+        Given an actual repository, look up what the target should be in the
+        config. If there is an explicit entry, use that, otherwise apply the
+        defaults.
+        """
+        target = self.repos_by_id.get(actual.repo_id)
+        if target is None:
+            return self.default_repo_settings._replace(
+                repo_id=actual.repo_id,
+                name=actual.name,
+            )
+        else:
+            return target
 
 
 class TeamMember(NamedTuple):
@@ -254,6 +301,35 @@ class TeamMember(NamedTuple):
         raise Exception(
             "Team memberships are not expressed in toml, "
             "please print the diffs in some other way."
+        )
+
+
+class Repository(NamedTuple):
+    repo_id: int
+    name: str
+    visibility: RepositoryVisibility
+
+    def get_id(self) -> int:
+        return self.repo_id
+
+    @staticmethod
+    def from_toml_dict(data: Dict[str, Any]) -> Repository:
+        return Repository(
+            # We use this for concrete repositories as well as the default,
+            # so we should allow the id and name to be omitted.
+            repo_id=data.get("repo_id", 0),
+            name=data.get("name", ""),
+            visibility=RepositoryVisibility(data["visibility"]),
+        )
+
+    def format_toml(self) -> str:
+        return (
+            "[[repository]]\n"
+            f"repo_id = {self.repo_id}\n"
+            # Splicing the string is safe here, because GitHub repo names are
+            # very restrictive and do not contain quotes.
+            f'name = "{self.name}"\n'
+            f'visibility = "{self.visibility.value}"'
         )
 
 
@@ -295,13 +371,25 @@ def parse_link_header(contents: str) -> Dict[str, str]:
     return result
 
 
+def print_status_stderr(status: str) -> None:
+    """
+    On stderr, clear the current line with an ANSI escape code, jump back to
+    the start of the line, and print the status, without a newline. This means
+    that subsequent updates will overwrite each other (if nothing gets printed
+    to stdout in the meantime).
+    """
+    clear_line = "\x1b[2K\r"
+    print(f"{clear_line}{status}", end="", file=sys.stderr)
+
+
 class GithubClient(NamedTuple):
     connection: HTTPSConnection
     github_token: str
 
     @staticmethod
     def new(github_token: str) -> GithubClient:
-        timeout_seconds = 10
+        # 10 seconds was not enough for the "/org/{org}/repos" endpoint.
+        timeout_seconds = 15
         connection = HTTPSConnection(
             "api.github.com",
             timeout=timeout_seconds,
@@ -377,11 +465,8 @@ class GithubClient(NamedTuple):
         members = list(self._http_get_json_paginated(f"/orgs/{org}/members"))
         for i, member in enumerate(members):
             username: str = member["login"]
-            clear_line = "\x1b[2K\r"
-            print(
-                f"{clear_line}[{i + 1} / {len(members)}] Retrieving membership: {username}",
-                end="",
-                file=sys.stderr,
+            print_status_stderr(
+                f"[{i + 1} / {len(members)}] Retrieving membership: {username}",
             )
             membership: Dict[str, Any] = self._http_get_json(
                 f"/orgs/{org}/memberships/{username}"
@@ -396,7 +481,7 @@ class GithubClient(NamedTuple):
         # output is not mixed with status updates. (They go separately to stdout
         # and stderr anyway, but in a terminal you don’t want interleaved
         # output.)
-        print(clear_line, end="", file=sys.stderr)
+        print_status_stderr("")
 
     def get_organization_teams(self, org: str) -> Iterable[Team]:
         teams = self._http_get_json_paginated(f"/orgs/{org}/teams")
@@ -422,6 +507,20 @@ class GithubClient(NamedTuple):
                 user_id=member["id"],
                 team_name=team.name,
             )
+
+    def get_organization_repositories(self, org: str) -> Iterable[Repository]:
+        # Listing repositories is a slow endpoint, and paginated as well, print
+        # some progress. Technically from the pagination headers we could
+        # extract more precise progress, but I am not going to bother.
+        print_status_stderr("[...] Listing organization repositories")
+        repos = self._http_get_json_paginated(f"/orgs/{org}/repos")
+        for repo in repos:
+            yield Repository(
+                repo_id=repo["id"],
+                name=repo["name"],
+                visibility=RepositoryVisibility(repo["visibility"]),
+            )
+        print_status_stderr("")
 
 
 def print_indented(lines: str) -> None:
@@ -606,6 +705,22 @@ def main() -> None:
     org_name = target.organization.name
 
     client = GithubClient.new(github_token)
+
+    actual_repos = set(client.get_organization_repositories(org_name))
+    target_repos = set(target.repos_by_id.values()) | {
+        target.get_repository_target(r) for r in actual_repos
+    }
+    repos_diff = Diff.new(target=target_repos, actual=actual_repos)
+    repos_diff.print_diff(
+        f"The following repositories are specified in {target_fname} but not present on GitHub:",
+        # Because we generate the targets from the actuals, that means there
+        # should not be any repos that are present on GitHub but for which we
+        # have no target.
+        "You should not see this message, please report a bug.",
+        f"The following repositories on GitHub need to be changed to match {target_fname}:",
+    )
+
+    sys.exit(1)
 
     current_org = client.get_organization(org_name)
     if current_org != target.organization:
