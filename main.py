@@ -14,9 +14,11 @@ USAGE
 ENVIRONMENT
 
 Requires GITHUB_TOKEN to be set in the environment. This must contain a personal
-access token that has "read:org" permission (listed under "admin:org", but the
-parent permission is not needed). You can generate a new token at
-https://github.com/settings/tokens.
+access token that has "admin:org" permission, which when checked implies both
+"read:org" and "write:org". This application does not modify the organization,
+but some organization-wide settings, such as the default repository permission,
+can only be read with "admin:org" permission, and not with "read:org". You can
+generate a new token at https://github.com/settings/tokens.
 
 ASSUMPTIONS
 
@@ -36,9 +38,10 @@ organization. The format is as follows.
     # GitHub organization to target.
     name = "acme-co"
 
-    # TODO: Document.
-    repository_base_permission = "read"
-    repository_write_access_team = "tech"
+    # Permission that organization members have on organization repositories.
+    # Additional permissions can be granted per repository. Must be one of
+    # "none", "read", "write", "admin".
+    default_repository_permission = "read"
 
     [[team]]
     # Name of the team. In this example, you can mention the team with
@@ -97,6 +100,13 @@ from dataclasses import dataclass
 class OrganizationRole(Enum):
     ADMIN = "admin"
     MEMBER = "member"
+
+
+class RepositoryPermission(Enum):
+    NONE = "none"
+    READ = "read"
+    WRITE = "write"
+    ADMIN = "admin"
 
 
 class OrganizationMember(NamedTuple):
@@ -168,13 +178,40 @@ class Team(NamedTuple):
 
 
 class Organization(NamedTuple):
+    """
+    The properties of a GitHub organization that we are interested in managing.
+    """
+
     name: str
+    default_repository_permission: RepositoryPermission
+
+    @staticmethod
+    def from_toml_dict(data: Dict[str, Any]) -> Organization:
+        return Organization(
+            name=data["name"],
+            default_repository_permission=RepositoryPermission(
+                data["default_repository_permission"]
+            ),
+        )
+
+    def format_toml(self) -> str:
+        lines = [
+            "[organization]",
+            "name = " + json.dumps(self.name),
+            f'default_repository_permission = "{self.default_repository_permission.value}"',
+        ]
+        return "\n".join(lines)
+
+
+class Configuration(NamedTuple):
+    organization: Organization
     members: Set[OrganizationMember]
     teams: Set[Team]
     team_memberships: Set[TeamMember]
 
     @staticmethod
-    def from_toml_dict(data: Dict[str, Any]) -> Organization:
+    def from_toml_dict(data: Dict[str, Any]) -> Configuration:
+        org = Organization.from_toml_dict(data["organization"])
         members = {OrganizationMember.from_toml_dict(m) for m in data["member"]}
         teams = {Team.from_toml_dict(m) for m in data["team"]}
         team_memberships = {
@@ -186,18 +223,18 @@ class Organization(NamedTuple):
             for user in data["member"]
             for team in user.get("teams", [])
         }
-        return Organization(
-            name=data["organization"]["name"],
+        return Configuration(
+            organization=org,
             members=members,
             teams=teams,
             team_memberships=team_memberships,
         )
 
     @staticmethod
-    def from_toml_file(fname: str) -> Organization:
+    def from_toml_file(fname: str) -> Configuration:
         with open(fname, "r", encoding="utf-8") as f:
             data = tomli.load(f)
-            return Organization.from_toml_dict(data)
+            return Configuration.from_toml_dict(data)
 
 
 class TeamMember(NamedTuple):
@@ -326,6 +363,14 @@ class GithubClient(NamedTuple):
                     f"Got {response.status} from {next_url!r}: {body!r}", response
                 )
 
+    def get_organization(self, org: str) -> Organization:
+        org_data: Dict[str, Any] = self._http_get_json(f"/orgs/{org}")
+        default_repo_permission: str = org_data["default_repository_permission"]
+        return Organization(
+            name=org,
+            default_repository_permission=RepositoryPermission(default_repo_permission),
+        )
+
     def get_organization_members(self, org: str) -> Iterable[OrganizationMember]:
         # Collect the members into a list first, so we can show an accurate
         # progress meter later.
@@ -347,9 +392,11 @@ class GithubClient(NamedTuple):
                 role=OrganizationRole(membership["role"]),
             )
 
-        # After the final status update, do put a newline on stderr. This means
-        # that the final status update will remain visible.
-        print("", file=sys.stderr)
+        # After the final status update, clear the line again, so the final
+        # output is not mixed with status updates. (They go separately to stdout
+        # and stderr anyway, but in a terminal you don’t want interleaved
+        # output.)
+        print("{clear_line}", end="", file=sys.stderr)
 
     def get_organization_teams(self, org: str) -> Iterable[Team]:
         teams = self._http_get_json_paginated(f"/orgs/{org}/teams")
@@ -555,20 +602,29 @@ def main() -> None:
         sys.exit(1)
 
     target_fname = sys.argv[1]
-    target_org = Organization.from_toml_file(target_fname)
+    target = Configuration.from_toml_file(target_fname)
+    org_name = target.organization.name
 
     client = GithubClient.new(github_token)
 
-    current_members = set(client.get_organization_members(target_org.name))
-    members_diff = Diff.new(target=target_org.members, actual=current_members)
+    current_org = client.get_organization(org_name)
+    if current_org != target.organization:
+        print("The organization-level settings need to be changed as follows:\n")
+        print_simple_diff(
+            actual=current_org.format_toml(),
+            target=target.organization.format_toml(),
+        )
+
+    current_members = set(client.get_organization_members(org_name))
+    members_diff = Diff.new(target=target.members, actual=current_members)
     members_diff.print_diff(
         f"The following members are specified in {target_fname} but not a member of the GitHub organization:",
         f"The following members are not specified in {target_fname} but are a member of the GitHub organization:",
         f"The following members on GitHub need to be changed to match {target_fname}:",
     )
 
-    current_teams = set(client.get_organization_teams(target_org.name))
-    teams_diff = Diff.new(target=target_org.teams, actual=current_teams)
+    current_teams = set(client.get_organization_teams(org_name))
+    teams_diff = Diff.new(target=target.teams, actual=current_teams)
     teams_diff.print_diff(
         f"The following teams specified in {target_fname} are not present on GitHub:",
         f"The following teams are not specified in {target_fname} but are present on GitHub:",
@@ -578,7 +634,7 @@ def main() -> None:
     # For all the teams which we want to exist, and which do actually exist,
     # compare their members. When requesting the members, we pass in the actual
     # team, not the target team, because the endpoint needs the actual slug.
-    target_team_names = {team.name for team in target_org.teams}
+    target_team_names = {team.name for team in target.teams}
     existing_desired_teams = [
         team for team in current_teams if team.name in target_team_names
     ]
@@ -587,9 +643,9 @@ def main() -> None:
             team_name=team.name,
             target_fname=target_fname,
             target_members={
-                m for m in target_org.team_memberships if m.team_name == team.name
+                m for m in target.team_memberships if m.team_name == team.name
             },
-            actual_members=set(client.get_team_members(target_org.name, team)),
+            actual_members=set(client.get_team_members(org_name, team)),
         )
 
 
