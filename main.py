@@ -84,11 +84,32 @@ organization. The format is as follows.
     # One of "private" or "public".
     visibility = "public"
 
+    # Users who have explicit access to this repository (outside of implicit
+    # access through being part of a team or the organization). These can be
+    # users that are not part of the organization. The permisssion level can
+    # be "pull", "push", "maintain", or "admin". TODO.
+    user_access = [
+      { user_id = 583231, user_name = "octocat", permission = "push" },
+    ]
+
+    # Teams who have explicit access to this repository (outside of implicit
+    # access through being a child team of a team with access).
+    team_access = [
+      { team_name = "admins", permission = "admin" },
+      { team_name = "readers", permission = "pull" },
+    ]
+
     # All organization repositories that do not have an explicit [[repository]]
     # entry in this file, are compared against the default settings. This
     # section supports the same keys as [[repository]], with the exception of
     # "repo_id" and "name".
     [repository_default]
+    user_access = []
+    team_access = [{ team_name = "admins", permission = "admin" }]
+
+    # Visibility is optional for the default repository settings. When left
+    # unspecified, and there is no explicit [[repository]] entry for a given
+    # repository, we assume that its current visibility is the correct one.
     visibility = "private"
 """
 
@@ -108,6 +129,7 @@ from typing import (
     NamedTuple,
     Optional,
     Set,
+    Tuple,
     TypeVar,
     Protocol,
 )
@@ -122,16 +144,81 @@ class OrganizationRole(Enum):
     MEMBER = "member"
 
 
-class RepositoryPermission(Enum):
+class RepositoryPermissionGlobal(Enum):
+    """
+    Settings allowed by the default repository access setting in the
+    organization settings.
+    """
     NONE = "none"
     READ = "read"
     WRITE = "write"
     ADMIN = "admin"
 
 
+class RepositoryPermissionLocal(Enum):
+    """
+    Settings allowed for users and teams in repository access settings.
+    """
+    PULL = "pull"
+    PUSH = "push"
+    PUSH = "maintain"
+    ADMIN = "admin"
+
+
 class RepositoryVisibility(Enum):
     PRIVATE = "private"
     PUBLIC = "public"
+
+
+class TeamRepositoryAccess(NamedTuple):
+    """
+    When a team has direct access to a repository, and what the access level is.
+    Subteams of a team gain access indirectly, but they are not listed here.
+    """
+    team_name: str
+    permission: RepositoryPermissionLocal
+
+    @staticmethod
+    def from_toml_dict(data: Dict[str, Any]) -> TeamRepositoryAccess:
+        return TeamRepositoryAccess(
+            team_name=data["team_name"],
+            permission=RepositoryPermissionLocal(data["permission"]),
+        )
+
+    def format_toml(self) -> str:
+        return (
+            "{ team_name = " +
+            json.dumps(self.team_name) +
+            ', permission = "' +
+            self.permission.value +
+            '" }'
+        )
+
+
+class UserRepositoryAccess(NamedTuple):
+    """
+    When a user has direct access to a repository, and what the access level is.
+    Users can also gain access to a repository by being part of a team that has
+    access, but those are not listed here.
+    """
+    user_id: int
+    user_name: str
+    permission: RepositoryPermissionLocal
+
+    @staticmethod
+    def from_toml_dict(data: Dict[str, Any]) -> UserRepositoryAccess:
+        return UserRepositoryAccess(
+            user_id=data["user_id"],
+            user_name=data["user_name"],
+            permission=RepositoryPermissionLocal(data["permission"]),
+        )
+
+    def format_toml(self) -> str:
+        return (
+            "{ user_id = " + str(self.user_id) +
+            ', user_name = "' + self.user_name +
+            '", permission = "' + self.permission.value + '" }'
+        )
 
 
 class OrganizationMember(NamedTuple):
@@ -208,13 +295,13 @@ class Organization(NamedTuple):
     """
 
     name: str
-    default_repository_permission: RepositoryPermission
+    default_repository_permission: RepositoryPermissionGlobal
 
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> Organization:
         return Organization(
             name=data["name"],
-            default_repository_permission=RepositoryPermission(
+            default_repository_permission=RepositoryPermissionGlobal(
                 data["default_repository_permission"]
             ),
         )
@@ -279,6 +366,10 @@ class Configuration(NamedTuple):
             return self.default_repo_settings._replace(
                 repo_id=actual.repo_id,
                 name=actual.name,
+                # If the default repo settings have a visibility specified, we
+                # should use that, but if it's not set then we just copy over
+                # whatever value it currently is.
+                visibility=self.default_repo_settings.visibility or actual.visibility
             )
         else:
             return target
@@ -307,7 +398,10 @@ class TeamMember(NamedTuple):
 class Repository(NamedTuple):
     repo_id: int
     name: str
-    visibility: RepositoryVisibility
+    visibility: Optional[RepositoryVisibility]
+    # These are tuples instead of lists to make them hashable.
+    user_access: Tuple[UserRepositoryAccess, ...]
+    team_access: Tuple[TeamRepositoryAccess, ...]
 
     def get_id(self) -> int:
         return self.repo_id
@@ -319,18 +413,43 @@ class Repository(NamedTuple):
             # so we should allow the id and name to be omitted.
             repo_id=data.get("repo_id", 0),
             name=data.get("name", ""),
-            visibility=RepositoryVisibility(data["visibility"]),
+            visibility=RepositoryVisibility(data["visibility"]) if "visibility" in data else None,
+            user_access=tuple(sorted(
+                UserRepositoryAccess.from_toml_dict(x) for x in data["user_access"]
+            )),
+            team_access=tuple(sorted(
+                TeamRepositoryAccess.from_toml_dict(x) for x in data["team_access"]
+            )),
         )
 
     def format_toml(self) -> str:
-        return (
+        user_access_lines = ["  " + a.format_toml() for a in sorted(self.user_access)]
+        team_access_lines = ["  " + a.format_toml() for a in sorted(self.team_access)]
+        result = (
             "[[repository]]\n"
             f"repo_id = {self.repo_id}\n"
             # Splicing the string is safe here, because GitHub repo names are
             # very restrictive and do not contain quotes.
             f'name = "{self.name}"\n'
-            f'visibility = "{self.visibility.value}"'
         )
+
+        # For the defaults, you might omit visibility, but when we start
+        # printing diffs, then we diff against a concrete target, which does
+        # need to have a visibility.
+        assert self.visibility is not None
+        result = result + f'visibility = "{self.visibility.value}"\n'
+
+        if len(user_access_lines) > 0:
+            result = result + "user_access = [\n" + ",\n".join(user_access_lines) + ",\n]\n"
+        else:
+            result = result + "user_access = []\n"
+
+        if len(team_access_lines) > 0:
+            result = result + "team_access = [\n" + ",\n".join(team_access_lines) + ",\n]"
+        else:
+            result = result + "team_access = []"
+
+        return result
 
 
 def parse_link_header(contents: str) -> Dict[str, str]:
@@ -456,7 +575,7 @@ class GithubClient(NamedTuple):
         default_repo_permission: str = org_data["default_repository_permission"]
         return Organization(
             name=org,
-            default_repository_permission=RepositoryPermission(default_repo_permission),
+            default_repository_permission=RepositoryPermissionGlobal(default_repo_permission),
         )
 
     def get_organization_members(self, org: str) -> Iterable[OrganizationMember]:
@@ -508,17 +627,30 @@ class GithubClient(NamedTuple):
                 team_name=team.name,
             )
 
+    def get_repository_teams(self, org: str, repo: str) -> Iterable[TeamRepositoryAccess]:
+        teams = self._http_get_json_paginated(f"/repos/{org}/{repo}/teams")
+        for team in teams:
+            yield TeamRepositoryAccess(
+                team_name=team["name"],
+                permission=RepositoryPermissionLocal(team["permission"]),
+            )
+
     def get_organization_repositories(self, org: str) -> Iterable[Repository]:
         # Listing repositories is a slow endpoint, and paginated as well, print
         # some progress. Technically from the pagination headers we could
         # extract more precise progress, but I am not going to bother.
         print_status_stderr("[...] Listing organization repositories")
         repos = self._http_get_json_paginated(f"/orgs/{org}/repos")
-        for repo in repos:
+        for i, repo in enumerate(repos):
+            name = repo["name"]
+            team_access = tuple(sorted(self.get_repository_teams(org, name)))
+            print_status_stderr(f"[{i+1} / ??] Listing organization repositories")
             yield Repository(
                 repo_id=repo["id"],
-                name=repo["name"],
+                name=name,
                 visibility=RepositoryVisibility(repo["visibility"]),
+                user_access=(),
+                team_access=team_access,
             )
         print_status_stderr("")
 
