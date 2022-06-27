@@ -396,7 +396,7 @@ class GithubClient(NamedTuple):
         # output is not mixed with status updates. (They go separately to stdout
         # and stderr anyway, but in a terminal you don’t want interleaved
         # output.)
-        print("{clear_line}", end="", file=sys.stderr)
+        print(clear_line, end="", file=sys.stderr)
 
     def get_organization_teams(self, org: str) -> Iterable[Team]:
         teams = self._http_get_json_paginated(f"/orgs/{org}/teams")
