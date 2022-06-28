@@ -530,8 +530,8 @@ def print_team_members_diff(
 
     if len(members_diff.to_add) > 0:
         print(
-            f"The following members of team '{team_name}' are not members "
-            f"on GitHub, but are specified in {target_fname}:\n"
+            f"The following members of team '{team_name}' are specified "
+            f"in {target_fname}, but are not present on GitHub:\n"
         )
         for member in sorted(members_diff.to_add):
             print(f"  {member.user_name}")
@@ -563,7 +563,7 @@ def main() -> None:
     members_diff = Diff.new(target=target_org.members, actual=current_members)
     members_diff.print_diff(
         f"The following members are specified in {target_fname} but not a member of the GitHub organization:",
-        f"The following members of the GitHub organization are not specified in {target_fname}:",
+        f"The following members are not specified in {target_fname} but are a member of the GitHub organization:",
         f"The following members on GitHub need to be changed to match {target_fname}:",
     )
 
@@ -571,7 +571,7 @@ def main() -> None:
     teams_diff = Diff.new(target=target_org.teams, actual=current_teams)
     teams_diff.print_diff(
         f"The following teams specified in {target_fname} are not present on GitHub:",
-        f"The following teams in the GitHub organization are not specified in {target_fname}:",
+        f"The following teams are not specified in {target_fname} but are present on GitHub:",
         f"The following teams on GitHub need to be changed to match {target_fname}:",
     )
 
