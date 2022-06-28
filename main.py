@@ -162,7 +162,7 @@ class Team(NamedTuple):
         lines.append("description = " + json.dumps(self.description))
 
         if self.parent_team_name is not None:
-            lines.append(f"parent = {json.dumps(self.parent_team_name)}")
+            lines.append("parent = " + json.dumps(self.parent_team_name))
 
         return "\n".join(lines)
 
