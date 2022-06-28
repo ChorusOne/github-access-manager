@@ -45,7 +45,7 @@ organization. The format is as follows.
     # '@acme-co/developers'.
     name = "developers"
     # Known after creating the team.
-    github_team_id = 9999
+    team_id = 9999
     description = "All developers"
 
     # Optionally, if this team should be nested under a parent team,
@@ -56,8 +56,8 @@ organization. The format is as follows.
     # Because usernames can be changed, we identify GitHub users by id.
     # One easy way to get a user's id is to look at the url of their avatar,
     # it's of the form "https://avatars.githubusercontent.com/u/«user-id»?v=4".
-    github_user_id = 583231
-    github_user_name = "octocat"
+    user_id = 583231
+    user_name = "octocat"
 
     # Role in the organization is either "member" or "admin".
     organization_role = "member"
@@ -110,19 +110,19 @@ class OrganizationMember(NamedTuple):
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> OrganizationMember:
         return OrganizationMember(
-            user_id=data["github_user_id"],
-            user_name=data["github_user_name"],
+            user_id=data["user_id"],
+            user_name=data["user_name"],
             role=OrganizationRole(data["organization_role"]),
         )
 
     def format_toml(self) -> str:
         return (
             "[[member]]\n"
-            f"github_user_id = {self.user_id}\n"
+            f"user_id = {self.user_id}\n"
             # Splicing the string is safe here, because GitHub usernames are
             # very restrictive and do not contain quotes.
-            f'github_user_name = "{self.user_name}"\n'
-            f'role = "{self.role.value}"'
+            f'user_name = "{self.user_name}"\n'
+            f'organization_role = "{self.role.value}"'
         )
 
 
@@ -139,7 +139,7 @@ class Team(NamedTuple):
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> Team:
         return Team(
-            team_id=data.get("github_team_id", 0),
+            team_id=data.get("team_id", 0),
             name=data["name"],
             # By default if not specified, the team slug should be equal to its
             # name.
@@ -151,7 +151,7 @@ class Team(NamedTuple):
     def format_toml(self) -> str:
         lines = [
             "[[team]]",
-            f"github_team_id = {self.team_id}",
+            f"team_id = {self.team_id}",
             "name = " + json.dumps(self.name),
         ]
 
@@ -162,7 +162,7 @@ class Team(NamedTuple):
         lines.append("description = " + json.dumps(self.description))
 
         if self.parent_team_name is not None:
-            lines.append(f"parent = {json.dumps(self.parent_team_name)}")
+            lines.append("parent = " + json.dumps(self.parent_team_name))
 
         return "\n".join(lines)
 
@@ -179,8 +179,8 @@ class Organization(NamedTuple):
         teams = {Team.from_toml_dict(m) for m in data["team"]}
         team_memberships = {
             TeamMember(
-                user_id=user["github_user_id"],
-                user_name=user["github_user_name"],
+                user_id=user["user_id"],
+                user_name=user["user_name"],
                 team_name=team,
             )
             for user in data["member"]
@@ -530,8 +530,8 @@ def print_team_members_diff(
 
     if len(members_diff.to_add) > 0:
         print(
-            f"The following members of team '{team_name}' are not members "
-            f"on GitHub, but are specified in {target_fname}:\n"
+            f"The following members of team '{team_name}' are specified "
+            f"in {target_fname}, but are not present on GitHub:\n"
         )
         for member in sorted(members_diff.to_add):
             print(f"  {member.user_name}")
@@ -563,7 +563,7 @@ def main() -> None:
     members_diff = Diff.new(target=target_org.members, actual=current_members)
     members_diff.print_diff(
         f"The following members are specified in {target_fname} but not a member of the GitHub organization:",
-        f"The following members of the GitHub organization are not specified in {target_fname}:",
+        f"The following members are not specified in {target_fname} but are a member of the GitHub organization:",
         f"The following members on GitHub need to be changed to match {target_fname}:",
     )
 
@@ -571,7 +571,7 @@ def main() -> None:
     teams_diff = Diff.new(target=target_org.teams, actual=current_teams)
     teams_diff.print_diff(
         f"The following teams specified in {target_fname} are not present on GitHub:",
-        f"The following teams in the GitHub organization are not specified in {target_fname}:",
+        f"The following teams are not specified in {target_fname} but are present on GitHub:",
         f"The following teams on GitHub need to be changed to match {target_fname}:",
     )
 
