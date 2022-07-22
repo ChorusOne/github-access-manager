@@ -87,16 +87,16 @@ organization. The format is as follows.
     # Users who have explicit access to this repository (outside of implicit
     # access through being part of a team or the organization). These can be
     # users that are not part of the organization. The permisssion level can
-    # be "pull", "push", "maintain", or "admin". TODO.
+    # be "read", "triage", "write", "maintain", or "admin".
     user_access = [
-      { user_id = 583231, user_name = "octocat", permission = "push" },
+      { user_id = 583231, user_name = "octocat", role = "triage" },
     ]
 
     # Teams who have explicit access to this repository (outside of implicit
     # access through being a child team of a team with access).
     team_access = [
-      { team_name = "admins", permission = "admin" },
-      { team_name = "readers", permission = "pull" },
+      { team_name = "admins", role = "admin" },
+      { team_name = "readers", role = "read" },
     ]
 
     # All organization repositories that do not have an explicit [[repository]]
@@ -105,7 +105,7 @@ organization. The format is as follows.
     # "repo_id" and "name".
     [repository_default]
     user_access = []
-    team_access = [{ team_name = "admins", permission = "admin" }]
+    team_access = [{ team_name = "admins", role = "admin" }]
 
     # Visibility is optional for the default repository settings. When left
     # unspecified, and there is no explicit [[repository]] entry for a given
@@ -155,14 +155,58 @@ class RepositoryPermissionGlobal(Enum):
     ADMIN = "admin"
 
 
-class RepositoryPermissionLocal(Enum):
+class RepositoryAccessRole(Enum):
     """
     Settings allowed for users and teams in repository access settings.
+
+    NB: When you query the GitHub API for permissions, there are two fields: a
+    "permission" field that is a string, and it can be "push" or "pull" or
+    "admin" (and possibly other values, it's not documented), and "permissions",
+    which is an object that contains a boolean for various individual
+    permissions. Neither map directly to the options that you see in the "Choose
+    role" dropdown at https://github.com/{owner}/{repo}/settings/access. My
+    suspicion is that the "permission" string is a leftover from a previous,
+    less elaborate permission model, that is kept for backwards compatibility,
+    and that the strings in the UI map to pre-selected combinations of the
+    "permissions" bools. So we attempt to parse those bools back to these
+    options when we get the current permissions from the API.
+
+    The names here have been chosen to match the UI. In the API, "read" and
+    "write" are called "pull" and "push" respectively.
     """
-    PULL = "pull"
-    PUSH = "push"
-    PUSH = "maintain"
+    READ = "read"
+    TRIAGE = "triage"
+    WRITE = "write"
+    MAINTAIN = "maintain"
     ADMIN = "admin"
+
+    @staticmethod
+    def from_permissions_dict(permissions: Dict[str, bool]) -> RepositoryAccessRole:
+        # We expect each of the configurations to be a superset of the previous
+        # one, so assert that below. E.g. it wouldn't make sense to have "admin"
+        # permission but not "pull".
+        if permissions["admin"]:
+            assert permissions["maintain"]
+            assert permissions["push"]
+            assert permissions["triage"]
+            assert permissions["pull"]
+            return RepositoryAccessRole.ADMIN
+        if permissions["maintain"]:
+            assert permissions["push"]
+            assert permissions["triage"]
+            assert permissions["pull"]
+            return RepositoryAccessRole.MAINTAIN
+        if permissions["push"]:
+            assert permissions["triage"]
+            assert permissions["pull"]
+            return RepositoryAccessRole.WRITE
+        if permissions["triage"]:
+            assert permissions["pull"]
+            return RepositoryAccessRole.TRIAGE
+        if permissions["pull"]:
+            return RepositoryAccessRole.READ
+
+        raise Exception("At least *some* permission must be granted.")
 
 
 class RepositoryVisibility(Enum):
@@ -176,21 +220,21 @@ class TeamRepositoryAccess(NamedTuple):
     Subteams of a team gain access indirectly, but they are not listed here.
     """
     team_name: str
-    permission: RepositoryPermissionLocal
+    role: RepositoryAccessRole
 
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> TeamRepositoryAccess:
         return TeamRepositoryAccess(
             team_name=data["team_name"],
-            permission=RepositoryPermissionLocal(data["permission"]),
+            role=RepositoryAccessRole(data["role"]),
         )
 
     def format_toml(self) -> str:
         return (
             "{ team_name = " +
             json.dumps(self.team_name) +
-            ', permission = "' +
-            self.permission.value +
+            ', role = "' +
+            self.role.value +
             '" }'
         )
 
@@ -203,21 +247,21 @@ class UserRepositoryAccess(NamedTuple):
     """
     user_id: int
     user_name: str
-    permission: RepositoryPermissionLocal
+    role: RepositoryAccessRole
 
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> UserRepositoryAccess:
         return UserRepositoryAccess(
             user_id=data["user_id"],
             user_name=data["user_name"],
-            permission=RepositoryPermissionLocal(data["permission"]),
+            role=RepositoryAccessRole(data["role"]),
         )
 
     def format_toml(self) -> str:
         return (
             "{ user_id = " + str(self.user_id) +
             ', user_name = "' + self.user_name +
-            '", permission = "' + self.permission.value + '" }'
+            '", role = "' + self.role.value + '" }'
         )
 
 
@@ -630,9 +674,10 @@ class GithubClient(NamedTuple):
     def get_repository_teams(self, org: str, repo: str) -> Iterable[TeamRepositoryAccess]:
         teams = self._http_get_json_paginated(f"/repos/{org}/{repo}/teams")
         for team in teams:
+            permissions: Dict[str, bool] = team["permissions"]
             yield TeamRepositoryAccess(
                 team_name=team["name"],
-                permission=RepositoryPermissionLocal(team["permission"]),
+                role=RepositoryAccessRole.from_permissions_dict(permissions),
             )
 
     def get_organization_repositories(self, org: str) -> Iterable[Repository]:
