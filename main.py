@@ -684,12 +684,18 @@ class GithubClient(NamedTuple):
         # Listing repositories is a slow endpoint, and paginated as well, print
         # some progress. Technically from the pagination headers we could
         # extract more precise progress, but I am not going to bother.
-        print_status_stderr("[...] Listing organization repositories")
-        repos = self._http_get_json_paginated(f"/orgs/{org}/repos")
+        print_status_stderr("[1 / ??] Listing organization repositories")
+        repos = []
+        for i, more_repos in enumerate(self._http_get_json_paginated(f"/orgs/{org}/repos")):
+            repos.append(more_repos)
+            print_status_stderr(f"[{len(repos)} / ??] Listing organization repositories")
+        # Materialize to a list so we know the total so we can show a progress
+        # counter.
+        n = len(repos)
         for i, repo in enumerate(repos):
             name = repo["name"]
             team_access = tuple(sorted(self.get_repository_teams(org, name)))
-            print_status_stderr(f"[{i+1} / ??] Listing organization repositories")
+            print_status_stderr(f"[{i+1} / {n}] Getting team access on {name}")
             yield Repository(
                 repo_id=repo["id"],
                 name=name,
