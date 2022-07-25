@@ -149,6 +149,7 @@ class RepositoryPermissionGlobal(Enum):
     Settings allowed by the default repository access setting in the
     organization settings.
     """
+
     NONE = "none"
     READ = "read"
     WRITE = "write"
@@ -174,6 +175,7 @@ class RepositoryAccessRole(Enum):
     The names here have been chosen to match the UI. In the API, "read" and
     "write" are called "pull" and "push" respectively.
     """
+
     READ = "read"
     TRIAGE = "triage"
     WRITE = "write"
@@ -219,6 +221,7 @@ class TeamRepositoryAccess(NamedTuple):
     When a team has direct access to a repository, and what the access level is.
     Subteams of a team gain access indirectly, but they are not listed here.
     """
+
     team_name: str
     role: RepositoryAccessRole
 
@@ -231,11 +234,11 @@ class TeamRepositoryAccess(NamedTuple):
 
     def format_toml(self) -> str:
         return (
-            "{ team_name = " +
-            json.dumps(self.team_name) +
-            ', role = "' +
-            self.role.value +
-            '" }'
+            "{ team_name = "
+            + json.dumps(self.team_name)
+            + ', role = "'
+            + self.role.value
+            + '" }'
         )
 
 
@@ -245,6 +248,7 @@ class UserRepositoryAccess(NamedTuple):
     Users can also gain access to a repository by being part of a team that has
     access, but those are not listed here.
     """
+
     user_id: int
     user_name: str
     role: RepositoryAccessRole
@@ -259,9 +263,13 @@ class UserRepositoryAccess(NamedTuple):
 
     def format_toml(self) -> str:
         return (
-            "{ user_id = " + str(self.user_id) +
-            ', user_name = "' + self.user_name +
-            '", role = "' + self.role.value + '" }'
+            "{ user_id = "
+            + str(self.user_id)
+            + ', user_name = "'
+            + self.user_name
+            + '", role = "'
+            + self.role.value
+            + '" }'
         )
 
 
@@ -413,7 +421,7 @@ class Configuration(NamedTuple):
                 # If the default repo settings have a visibility specified, we
                 # should use that, but if it's not set then we just copy over
                 # whatever value it currently is.
-                visibility=self.default_repo_settings.visibility or actual.visibility
+                visibility=self.default_repo_settings.visibility or actual.visibility,
             )
         else:
             return target
@@ -457,13 +465,19 @@ class Repository(NamedTuple):
             # so we should allow the id and name to be omitted.
             repo_id=data.get("repo_id", 0),
             name=data.get("name", ""),
-            visibility=RepositoryVisibility(data["visibility"]) if "visibility" in data else None,
-            user_access=tuple(sorted(
-                UserRepositoryAccess.from_toml_dict(x) for x in data["user_access"]
-            )),
-            team_access=tuple(sorted(
-                TeamRepositoryAccess.from_toml_dict(x) for x in data["team_access"]
-            )),
+            visibility=RepositoryVisibility(data["visibility"])
+            if "visibility" in data
+            else None,
+            user_access=tuple(
+                sorted(
+                    UserRepositoryAccess.from_toml_dict(x) for x in data["user_access"]
+                )
+            ),
+            team_access=tuple(
+                sorted(
+                    TeamRepositoryAccess.from_toml_dict(x) for x in data["team_access"]
+                )
+            ),
         )
 
     def format_toml(self) -> str:
@@ -484,12 +498,16 @@ class Repository(NamedTuple):
         result = result + f'visibility = "{self.visibility.value}"\n'
 
         if len(user_access_lines) > 0:
-            result = result + "user_access = [\n" + ",\n".join(user_access_lines) + ",\n]\n"
+            result = (
+                result + "user_access = [\n" + ",\n".join(user_access_lines) + ",\n]\n"
+            )
         else:
             result = result + "user_access = []\n"
 
         if len(team_access_lines) > 0:
-            result = result + "team_access = [\n" + ",\n".join(team_access_lines) + ",\n]"
+            result = (
+                result + "team_access = [\n" + ",\n".join(team_access_lines) + ",\n]"
+            )
         else:
             result = result + "team_access = []"
 
@@ -619,7 +637,9 @@ class GithubClient(NamedTuple):
         default_repo_permission: str = org_data["default_repository_permission"]
         return Organization(
             name=org,
-            default_repository_permission=RepositoryPermissionGlobal(default_repo_permission),
+            default_repository_permission=RepositoryPermissionGlobal(
+                default_repo_permission
+            ),
         )
 
     def get_organization_members(self, org: str) -> Iterable[OrganizationMember]:
@@ -671,7 +691,9 @@ class GithubClient(NamedTuple):
                 team_name=team.name,
             )
 
-    def get_repository_teams(self, org: str, repo: str) -> Iterable[TeamRepositoryAccess]:
+    def get_repository_teams(
+        self, org: str, repo: str
+    ) -> Iterable[TeamRepositoryAccess]:
         teams = self._http_get_json_paginated(f"/repos/{org}/{repo}/teams")
         for team in teams:
             permissions: Dict[str, bool] = team["permissions"]
@@ -686,9 +708,13 @@ class GithubClient(NamedTuple):
         # extract more precise progress, but I am not going to bother.
         print_status_stderr("[1 / ??] Listing organization repositories")
         repos = []
-        for i, more_repos in enumerate(self._http_get_json_paginated(f"/orgs/{org}/repos")):
+        for i, more_repos in enumerate(
+            self._http_get_json_paginated(f"/orgs/{org}/repos")
+        ):
             repos.append(more_repos)
-            print_status_stderr(f"[{len(repos)} / ??] Listing organization repositories")
+            print_status_stderr(
+                f"[{len(repos)} / ??] Listing organization repositories"
+            )
         # Materialize to a list so we know the total so we can show a progress
         # counter.
         n = len(repos)
