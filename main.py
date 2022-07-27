@@ -374,6 +374,7 @@ class Configuration(NamedTuple):
     team_memberships: Set[TeamMember]
     default_repo_settings: Repository
     repos_by_id: Dict[int, Repository]
+    repos_by_name: Dict[str, Repository]
 
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> Configuration:
@@ -390,8 +391,9 @@ class Configuration(NamedTuple):
             for team in user.get("teams", [])
         }
         default_repo_settings = Repository.from_toml_dict(data["repository_default"])
-        repos = (Repository.from_toml_dict(r) for r in data["repository"])
+        repos = [Repository.from_toml_dict(r) for r in data["repository"]]
         repos_by_id = {r.repo_id: r for r in repos}
+        repos_by_name = {r.name: r for r in repos}
         return Configuration(
             organization=org,
             members=members,
@@ -399,6 +401,7 @@ class Configuration(NamedTuple):
             team_memberships=team_memberships,
             default_repo_settings=default_repo_settings,
             repos_by_id=repos_by_id,
+            repos_by_name=repos_by_name,
         )
 
     @staticmethod
@@ -413,18 +416,26 @@ class Configuration(NamedTuple):
         config. If there is an explicit entry, use that, otherwise apply the
         defaults.
         """
+        # Look up by repository id first.
         target = self.repos_by_id.get(actual.repo_id)
-        if target is None:
-            return self.default_repo_settings._replace(
-                repo_id=actual.repo_id,
-                name=actual.name,
-                # If the default repo settings have a visibility specified, we
-                # should use that, but if it's not set then we just copy over
-                # whatever value it currently is.
-                visibility=self.default_repo_settings.visibility or actual.visibility,
-            )
-        else:
+        if target is not None:
             return target
+
+        # If it is not there by id, try by name. This makes it a bit easier to
+        # add an entry to the config when we don't yet know its repository id
+        # (because that is hard to find out on GitHub without the API).
+        target = self.repos_by_name.get(actual.name)
+        if target is not None:
+            return target
+
+        return self.default_repo_settings._replace(
+            repo_id=actual.repo_id,
+            name=actual.name,
+            # If the default repo settings have a visibility specified, we
+            # should use that, but if it's not set then we just copy over
+            # whatever value it currently is.
+            visibility=self.default_repo_settings.visibility or actual.visibility,
+        )
 
 
 class TeamMember(NamedTuple):
@@ -455,8 +466,14 @@ class Repository(NamedTuple):
     user_access: Tuple[UserRepositoryAccess, ...]
     team_access: Tuple[TeamRepositoryAccess, ...]
 
-    def get_id(self) -> int:
-        return self.repo_id
+    def get_id(self) -> str:
+        # We use the name as the id for diffing, not the actual numeric id. This
+        # means that if you rename a repository on GitHub without editing the
+        # config file, the diff would show up as one repository to be removed
+        # and one to be added. But renaming is pretty uncommon, more common is
+        # adding a new entry to the config file without knowing the repository
+        # id, and you want the diff to show you the right id.
+        return self.name
 
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> Repository:
@@ -922,14 +939,13 @@ def main() -> None:
     repos_diff = Diff.new(target=target_repos, actual=actual_repos)
     repos_diff.print_diff(
         f"The following repositories are specified in {target_fname} but not present on GitHub:",
-        # Because we generate the targets from the actuals, that means there
-        # should not be any repos that are present on GitHub but for which we
-        # have no target.
-        "You should not see this message, please report a bug.",
+        # Even though we generate the targets form the actuals using the default
+        # settings, it can happen that we match on repository name but not id
+        # (when the id in the config file is wrong). Then the repo will be
+        # missing from the targets.
+        f"The following repositories are not specified in {target_fname} but present on GitHub:",
         f"The following repositories on GitHub need to be changed to match {target_fname}:",
     )
-
-    sys.exit(1)
 
     current_org = client.get_organization(org_name)
     if current_org != target.organization:
