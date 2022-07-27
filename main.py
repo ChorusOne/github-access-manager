@@ -477,14 +477,16 @@ class Repository(NamedTuple):
 
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> Repository:
+        visibility: Optional[RepositoryVisibility] = None
+        if "visibility" in data:
+            visibility = RepositoryVisibility(data["visibility"])
+
         return Repository(
             # We use this for concrete repositories as well as the default,
             # so we should allow the id and name to be omitted.
             repo_id=data.get("repo_id", 0),
             name=data.get("name", ""),
-            visibility=RepositoryVisibility(data["visibility"])
-            if "visibility" in data
-            else None,
+            visibility=visibility,
             user_access=tuple(
                 sorted(
                     UserRepositoryAccess.from_toml_dict(x) for x in data["user_access"]
