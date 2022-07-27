@@ -728,7 +728,7 @@ class GithubClient(NamedTuple):
         print_status_stderr("[1 / ??] Listing organization repositories")
         repos = []
         for i, more_repos in enumerate(
-            self._http_get_json_paginated(f"/orgs/{org}/repos")
+            self._http_get_json_paginated(f"/orgs/{org}/repos?per_page=100")
         ):
             repos.append(more_repos)
             print_status_stderr(
