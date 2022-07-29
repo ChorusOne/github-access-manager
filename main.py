@@ -14,11 +14,17 @@ USAGE
 ENVIRONMENT
 
 Requires GITHUB_TOKEN to be set in the environment. This must contain a personal
-access token that has "admin:org" permission, which when checked implies both
-"read:org" and "write:org". This application does not modify the organization,
-but some organization-wide settings, such as the default repository permission,
-can only be read with "admin:org" permission, and not with "read:org". You can
-generate a new token at https://github.com/settings/tokens.
+access token that has the following permissions:
+
+ * "admin:org", which when checked implies both "read:org" and "write:org".
+   This application does not modify the organization, but some organization-wide
+   settings, such as the default repository permission, can only be read with
+   the full "admin:org" permission, and not with "read:org".
+
+ * "repo", which implies various subpermissions. This is needed to list private
+   repositories within the organization.
+
+You can generate a new token at https://github.com/settings/tokens.
 
 ASSUMPTIONS
 
@@ -70,6 +76,41 @@ organization. The format is as follows.
     # separately, although GitHub’s behavior is that members of the child team
     # are already considered members of the parent team anyway.
     teams = ["developers"]
+
+    [[repository]]
+    repo_id = 1
+    name = "oktokit"
+
+    # One of "private" or "public".
+    visibility = "public"
+
+    # Users who have explicit access to this repository (outside of implicit
+    # access through being part of a team or the organization). These can be
+    # users that are not part of the organization. The permisssion level can
+    # be "read", "triage", "write", "maintain", or "admin".
+    user_access = [
+      { user_id = 583231, user_name = "octocat", role = "triage" },
+    ]
+
+    # Teams who have explicit access to this repository (outside of implicit
+    # access through being a child team of a team with access).
+    team_access = [
+      { team_name = "admins", role = "admin" },
+      { team_name = "readers", role = "read" },
+    ]
+
+    # All organization repositories that do not have an explicit [[repository]]
+    # entry in this file, are compared against the default settings. This
+    # section supports the same keys as [[repository]], with the exception of
+    # "repo_id" and "name".
+    [repository_default]
+    user_access = []
+    team_access = [{ team_name = "admins", role = "admin" }]
+
+    # Visibility is optional for the default repository settings. When left
+    # unspecified, and there is no explicit [[repository]] entry for a given
+    # repository, we assume that its current visibility is the correct one.
+    visibility = "private"
 """
 
 from __future__ import annotations
@@ -88,6 +129,7 @@ from typing import (
     NamedTuple,
     Optional,
     Set,
+    Tuple,
     TypeVar,
     Protocol,
 )
@@ -102,11 +144,133 @@ class OrganizationRole(Enum):
     MEMBER = "member"
 
 
-class RepositoryPermission(Enum):
+class RepositoryPermissionGlobal(Enum):
+    """
+    Settings allowed by the default repository access setting in the
+    organization settings.
+    """
+
     NONE = "none"
     READ = "read"
     WRITE = "write"
     ADMIN = "admin"
+
+
+class RepositoryAccessRole(Enum):
+    """
+    Settings allowed for users and teams in repository access settings.
+
+    NB: When you query the GitHub API for permissions, there are two fields: a
+    "permission" field that is a string, and it can be "push" or "pull" or
+    "admin" (and possibly other values, it's not documented), and "permissions",
+    which is an object that contains a boolean for various individual
+    permissions. Neither map directly to the options that you see in the "Choose
+    role" dropdown at https://github.com/{owner}/{repo}/settings/access. My
+    suspicion is that the "permission" string is a leftover from a previous,
+    less elaborate permission model, that is kept for backwards compatibility,
+    and that the strings in the UI map to pre-selected combinations of the
+    "permissions" bools. So we attempt to parse those bools back to these
+    options when we get the current permissions from the API.
+
+    The names here have been chosen to match the UI. In the API, "read" and
+    "write" are called "pull" and "push" respectively.
+    """
+
+    READ = "read"
+    TRIAGE = "triage"
+    WRITE = "write"
+    MAINTAIN = "maintain"
+    ADMIN = "admin"
+
+    @staticmethod
+    def from_permissions_dict(permissions: Dict[str, bool]) -> RepositoryAccessRole:
+        # We expect each of the configurations to be a superset of the previous
+        # one, so assert that below. E.g. it wouldn't make sense to have "admin"
+        # permission but not "pull".
+        if permissions["admin"]:
+            assert permissions["maintain"]
+            assert permissions["push"]
+            assert permissions["triage"]
+            assert permissions["pull"]
+            return RepositoryAccessRole.ADMIN
+        if permissions["maintain"]:
+            assert permissions["push"]
+            assert permissions["triage"]
+            assert permissions["pull"]
+            return RepositoryAccessRole.MAINTAIN
+        if permissions["push"]:
+            assert permissions["triage"]
+            assert permissions["pull"]
+            return RepositoryAccessRole.WRITE
+        if permissions["triage"]:
+            assert permissions["pull"]
+            return RepositoryAccessRole.TRIAGE
+        if permissions["pull"]:
+            return RepositoryAccessRole.READ
+
+        raise Exception("At least *some* permission must be granted.")
+
+
+class RepositoryVisibility(Enum):
+    PRIVATE = "private"
+    PUBLIC = "public"
+
+
+class TeamRepositoryAccess(NamedTuple):
+    """
+    When a team has direct access to a repository, and what the access level is.
+    Subteams of a team gain access indirectly, but they are not listed here.
+    """
+
+    team_name: str
+    role: RepositoryAccessRole
+
+    @staticmethod
+    def from_toml_dict(data: Dict[str, Any]) -> TeamRepositoryAccess:
+        return TeamRepositoryAccess(
+            team_name=data["team_name"],
+            role=RepositoryAccessRole(data["role"]),
+        )
+
+    def format_toml(self) -> str:
+        return (
+            "{ team_name = "
+            + json.dumps(self.team_name)
+            + ', role = "'
+            + self.role.value
+            + '" }'
+        )
+
+
+class UserRepositoryAccess(NamedTuple):
+    """
+    When a user has direct access to a repository, and what the access level is.
+    Users can also gain access to a repository by being part of a team that has
+    access, but those are not listed here.
+    """
+
+    user_id: int
+    user_name: str
+    role: RepositoryAccessRole
+
+    @staticmethod
+    def from_toml_dict(data: Dict[str, Any]) -> UserRepositoryAccess:
+        return UserRepositoryAccess(
+            user_id=data["user_id"],
+            user_name=data["user_name"],
+            role=RepositoryAccessRole(data["role"]),
+        )
+
+    def format_toml(self) -> str:
+        return (
+            "{ user_id = "
+            + str(self.user_id)
+            + ', user_name = "'
+            + self.user_name
+            + '", role = "'
+            + self.role.value
+            + '" }'
+        )
 
 
 class OrganizationMember(NamedTuple):
@@ -183,13 +347,13 @@ class Organization(NamedTuple):
     """
 
     name: str
-    default_repository_permission: RepositoryPermission
+    default_repository_permission: RepositoryPermissionGlobal
 
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> Organization:
         return Organization(
             name=data["name"],
-            default_repository_permission=RepositoryPermission(
+            default_repository_permission=RepositoryPermissionGlobal(
                 data["default_repository_permission"]
             ),
         )
@@ -208,6 +372,9 @@ class Configuration(NamedTuple):
     members: Set[OrganizationMember]
     teams: Set[Team]
     team_memberships: Set[TeamMember]
+    default_repo_settings: Repository
+    repos_by_id: Dict[int, Repository]
+    repos_by_name: Dict[str, Repository]
 
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> Configuration:
@@ -223,11 +390,18 @@ class Configuration(NamedTuple):
             for user in data["member"]
             for team in user.get("teams", [])
         }
+        default_repo_settings = Repository.from_toml_dict(data["repository_default"])
+        repos = [Repository.from_toml_dict(r) for r in data["repository"]]
+        repos_by_id = {r.repo_id: r for r in repos}
+        repos_by_name = {r.name: r for r in repos}
         return Configuration(
             organization=org,
             members=members,
             teams=teams,
             team_memberships=team_memberships,
+            default_repo_settings=default_repo_settings,
+            repos_by_id=repos_by_id,
+            repos_by_name=repos_by_name,
         )
 
     @staticmethod
@@ -235,6 +409,33 @@ class Configuration(NamedTuple):
         with open(fname, "r", encoding="utf-8") as f:
             data = tomli.load(f)
             return Configuration.from_toml_dict(data)
+
+    def get_repository_target(self, actual: Repository) -> Repository:
+        """
+        Given an actual repository, look up what the target should be in the
+        config. If there is an explicit entry, use that, otherwise apply the
+        defaults.
+        """
+        # Look up by repository id first.
+        target = self.repos_by_id.get(actual.repo_id)
+        if target is not None:
+            return target
+
+        # If it is not there by id, try by name. This makes it a bit easier to
+        # add an entry to the config when we don't yet know its repository id
+        # (because that is hard to find out on GitHub without the API).
+        target = self.repos_by_name.get(actual.name)
+        if target is not None:
+            return target
+
+        return self.default_repo_settings._replace(
+            repo_id=actual.repo_id,
+            name=actual.name,
+            # If the default repo settings have a visibility specified, we
+            # should use that, but if it's not set then we just copy over
+            # whatever value it currently is.
+            visibility=self.default_repo_settings.visibility or actual.visibility,
+        )
 
 
 class TeamMember(NamedTuple):
@@ -255,6 +456,81 @@ class TeamMember(NamedTuple):
             "Team memberships are not expressed in toml, "
             "please print the diffs in some other way."
         )
+
+
+class Repository(NamedTuple):
+    repo_id: int
+    name: str
+    visibility: Optional[RepositoryVisibility]
+    # These are tuples instead of lists to make them hashable.
+    user_access: Tuple[UserRepositoryAccess, ...]
+    team_access: Tuple[TeamRepositoryAccess, ...]
+
+    def get_id(self) -> str:
+        # We use the name as the id for diffing, not the actual numeric id. This
+        # means that if you rename a repository on GitHub without editing the
+        # config file, the diff would show up as one repository to be removed
+        # and one to be added. But renaming is pretty uncommon, more common is
+        # adding a new entry to the config file without knowing the repository
+        # id, and you want the diff to show you the right id.
+        return self.name
+
+    @staticmethod
+    def from_toml_dict(data: Dict[str, Any]) -> Repository:
+        visibility: Optional[RepositoryVisibility] = None
+        if "visibility" in data:
+            visibility = RepositoryVisibility(data["visibility"])
+
+        return Repository(
+            # We use this for concrete repositories as well as the default,
+            # so we should allow the id and name to be omitted.
+            repo_id=data.get("repo_id", 0),
+            name=data.get("name", ""),
+            visibility=visibility,
+            user_access=tuple(
+                sorted(
+                    UserRepositoryAccess.from_toml_dict(x) for x in data["user_access"]
+                )
+            ),
+            team_access=tuple(
+                sorted(
+                    TeamRepositoryAccess.from_toml_dict(x) for x in data["team_access"]
+                )
+            ),
+        )
+
+    def format_toml(self) -> str:
+        user_access_lines = ["  " + a.format_toml() for a in sorted(self.user_access)]
+        team_access_lines = ["  " + a.format_toml() for a in sorted(self.team_access)]
+        result = (
+            "[[repository]]\n"
+            f"repo_id = {self.repo_id}\n"
+            # Splicing the string is safe here, because GitHub repo names are
+            # very restrictive and do not contain quotes.
+            f'name = "{self.name}"\n'
+        )
+
+        # For the defaults, you might omit visibility, but when we start
+        # printing diffs, then we diff against a concrete target, which does
+        # need to have a visibility.
+        assert self.visibility is not None
+        result = result + f'visibility = "{self.visibility.value}"\n'
+
+        if len(user_access_lines) > 0:
+            result = (
+                result + "user_access = [\n" + ",\n".join(user_access_lines) + ",\n]\n"
+            )
+        else:
+            result = result + "user_access = []\n"
+
+        if len(team_access_lines) > 0:
+            result = (
+                result + "team_access = [\n" + ",\n".join(team_access_lines) + ",\n]"
+            )
+        else:
+            result = result + "team_access = []"
+
+        return result
 
 
 def parse_link_header(contents: str) -> Dict[str, str]:
@@ -295,13 +571,25 @@ def parse_link_header(contents: str) -> Dict[str, str]:
     return result
 
 
+def print_status_stderr(status: str) -> None:
+    """
+    On stderr, clear the current line with an ANSI escape code, jump back to
+    the start of the line, and print the status, without a newline. This means
+    that subsequent updates will overwrite each other (if nothing gets printed
+    to stdout in the meantime).
+    """
+    clear_line = "\x1b[2K\r"
+    print(f"{clear_line}{status}", end="", file=sys.stderr)
+
+
 class GithubClient(NamedTuple):
     connection: HTTPSConnection
     github_token: str
 
     @staticmethod
     def new(github_token: str) -> GithubClient:
-        timeout_seconds = 10
+        # 10 seconds was not enough for the "/org/{org}/repos" endpoint.
+        timeout_seconds = 15
         connection = HTTPSConnection(
             "api.github.com",
             timeout=timeout_seconds,
@@ -368,7 +656,9 @@ class GithubClient(NamedTuple):
         default_repo_permission: str = org_data["default_repository_permission"]
         return Organization(
             name=org,
-            default_repository_permission=RepositoryPermission(default_repo_permission),
+            default_repository_permission=RepositoryPermissionGlobal(
+                default_repo_permission
+            ),
         )
 
     def get_organization_members(self, org: str) -> Iterable[OrganizationMember]:
@@ -377,11 +667,8 @@ class GithubClient(NamedTuple):
         members = list(self._http_get_json_paginated(f"/orgs/{org}/members"))
         for i, member in enumerate(members):
             username: str = member["login"]
-            clear_line = "\x1b[2K\r"
-            print(
-                f"{clear_line}[{i + 1} / {len(members)}] Retrieving membership: {username}",
-                end="",
-                file=sys.stderr,
+            print_status_stderr(
+                f"[{i + 1} / {len(members)}] Retrieving membership: {username}",
             )
             membership: Dict[str, Any] = self._http_get_json(
                 f"/orgs/{org}/memberships/{username}"
@@ -396,7 +683,7 @@ class GithubClient(NamedTuple):
         # output is not mixed with status updates. (They go separately to stdout
         # and stderr anyway, but in a terminal you don’t want interleaved
         # output.)
-        print(clear_line, end="", file=sys.stderr)
+        print_status_stderr("")
 
     def get_organization_teams(self, org: str) -> Iterable[Team]:
         teams = self._http_get_json_paginated(f"/orgs/{org}/teams")
@@ -422,6 +709,46 @@ class GithubClient(NamedTuple):
                 user_id=member["id"],
                 team_name=team.name,
             )
+
+    def get_repository_teams(
+        self, org: str, repo: str
+    ) -> Iterable[TeamRepositoryAccess]:
+        teams = self._http_get_json_paginated(f"/repos/{org}/{repo}/teams")
+        for team in teams:
+            permissions: Dict[str, bool] = team["permissions"]
+            yield TeamRepositoryAccess(
+                team_name=team["name"],
+                role=RepositoryAccessRole.from_permissions_dict(permissions),
+            )
+
+    def get_organization_repositories(self, org: str) -> Iterable[Repository]:
+        # Listing repositories is a slow endpoint, and paginated as well, print
+        # some progress. Technically from the pagination headers we could
+        # extract more precise progress, but I am not going to bother.
+        print_status_stderr("[1 / ??] Listing organization repositories")
+        repos = []
+        for i, more_repos in enumerate(
+            self._http_get_json_paginated(f"/orgs/{org}/repos?per_page=100")
+        ):
+            repos.append(more_repos)
+            print_status_stderr(
+                f"[{len(repos)} / ??] Listing organization repositories"
+            )
+        # Materialize to a list so we know the total so we can show a progress
+        # counter.
+        n = len(repos)
+        for i, repo in enumerate(repos):
+            name = repo["name"]
+            team_access = tuple(sorted(self.get_repository_teams(org, name)))
+            print_status_stderr(f"[{i+1} / {n}] Getting team access on {name}")
+            yield Repository(
+                repo_id=repo["id"],
+                name=name,
+                visibility=RepositoryVisibility(repo["visibility"]),
+                user_access=(),
+                team_access=team_access,
+            )
+        print_status_stderr("")
 
 
 def print_indented(lines: str) -> None:
@@ -606,6 +933,21 @@ def main() -> None:
     org_name = target.organization.name
 
     client = GithubClient.new(github_token)
+
+    actual_repos = set(client.get_organization_repositories(org_name))
+    target_repos = set(target.repos_by_id.values()) | {
+        target.get_repository_target(r) for r in actual_repos
+    }
+    repos_diff = Diff.new(target=target_repos, actual=actual_repos)
+    repos_diff.print_diff(
+        f"The following repositories are specified in {target_fname} but not present on GitHub:",
+        # Even though we generate the targets form the actuals using the default
+        # settings, it can happen that we match on repository name but not id
+        # (when the id in the config file is wrong). Then the repo will be
+        # missing from the targets.
+        f"The following repositories are not specified in {target_fname} but present on GitHub:",
+        f"The following repositories on GitHub need to be changed to match {target_fname}:",
+    )
 
     current_org = client.get_organization(org_name)
     if current_org != target.organization:
