@@ -721,6 +721,22 @@ class GithubClient(NamedTuple):
                 role=RepositoryAccessRole.from_permissions_dict(permissions),
             )
 
+    def get_repository_users(
+        self, org: str, repo: str
+    ) -> Iterable[UserRepositoryAccess]:
+        # We query with affiliation=direct to get all users that have explicit
+        # access to the repository (i.e. not those who have implicit access
+        # through being a member of a group). The default is affiliation=all,
+        # which also returns users with implicit access.
+        users = self._http_get_json_paginated(f"/repos/{org}/{repo}/collaborators?affiliation=direct")
+        for user in users:
+            permissions: Dict[str, bool] = user["permissions"]
+            yield UserRepositoryAccess(
+                user_id=user["id"],
+                user_name=user["login"],
+                role=RepositoryAccessRole.from_permissions_dict(permissions),
+            )
+
     def get_organization_repositories(self, org: str) -> Iterable[Repository]:
         # Listing repositories is a slow endpoint, and paginated as well, print
         # some progress. Technically from the pagination headers we could
@@ -739,13 +755,14 @@ class GithubClient(NamedTuple):
         n = len(repos)
         for i, repo in enumerate(repos):
             name = repo["name"]
+            print_status_stderr(f"[{i+1} / {n}] Getting access on {name}")
+            user_access = tuple(sorted(self.get_repository_users(org, name)))
             team_access = tuple(sorted(self.get_repository_teams(org, name)))
-            print_status_stderr(f"[{i+1} / {n}] Getting team access on {name}")
             yield Repository(
                 repo_id=repo["id"],
                 name=name,
                 visibility=RepositoryVisibility(repo["visibility"]),
-                user_access=(),
+                user_access=user_access,
                 team_access=team_access,
             )
         print_status_stderr("")
