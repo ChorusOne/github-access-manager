@@ -124,7 +124,7 @@ from __future__ import annotations
 import os
 import sys
 import json
-import tomli
+import tomllib
 
 from typing import (
     Any,
@@ -412,8 +412,8 @@ class Configuration(NamedTuple):
 
     @staticmethod
     def from_toml_file(fname: str) -> Configuration:
-        with open(fname, "r", encoding="utf-8") as f:
-            data = tomli.load(f)
+        with open(fname, "rb") as f:
+            data = tomllib.load(f)
             return Configuration.from_toml_dict(data)
 
     def get_repository_target(self, actual: Repository) -> Repository:

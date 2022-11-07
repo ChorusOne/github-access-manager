@@ -10,14 +10,26 @@ the future.
 
 ## Running
 
-Run in an environment with all dependencies available with [Nix][nix] [2.3][nix-2.3]:
+GitHub access manager needs Python 3.11 or later (for TOML support) and has no
+dependencies outside of the standard library.
 
-    nix run --command ./main.py
+    ./main.py --help
+    ./main.py config.toml
 
-Alternatively, use Python 3.11 which has toml support in the standard library,
-or set up a virtualenv and `pip install tomli`.
+Optionally, a Nix flake is provided to run with a pinned Python version. You
+need [Nix 2.10 or later](https://nixos.org/download.html). Then run `nix`
+with either `--extra-experimental-features nix-command` and
+`--extra-experimental-features flakes`, or add them to your
+`~/.config/nix/nix.conf`:
 
-See the docstring in `main.py` for more information, or run with `--help`.
+    experimental-features = nix-command flakes
 
-[nix]:     https://nixos.org/
-[nix-2.3]: https://releases.nixos.org/?prefix=nix/nix-2.3/
+Then run with Nix:
+
+    nix run . -- --help
+    nix run . -- config.toml
+
+You can also enter a shell with the right Python version in the environment:
+
+    nix develop
+    ./main.py --help
