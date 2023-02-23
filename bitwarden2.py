@@ -321,3 +321,162 @@ class Configuration(NamedTuple):
         with open(fname, "rb") as f:
             data = tomllib.load(f)
             return Configuration.from_toml_dict(data)
+
+def print_indented(lines: str) -> None:
+    """Print the input indented by two spaces."""
+    for line in lines.splitlines():
+        print(f"  {line}")
+
+
+def print_simple_diff(actual: str, target: str) -> None:
+    """
+    Print a line-based diff of the two strings, without abbreviating large
+    chunks of identical lines like a standard unified diff would do.
+    """
+    lines_actual = actual.splitlines()
+    lines_target = target.splitlines()
+    line_diff = SequenceMatcher(None, lines_actual, lines_target)
+    for tag, i1, i2, j1, j2 in line_diff.get_opcodes():
+        if tag == "equal":
+            for line in lines_actual[i1:i2]:
+                print("  " + line)
+        elif tag == "replace":
+            for line in lines_actual[i1:i2]:
+                print("- " + line)
+            for line in lines_target[j1:j2]:
+                print("+ " + line)
+        elif tag == "delete":
+            for line in lines_actual[i1:i2]:
+                print("- " + line)
+        elif tag == "insert":
+            for line in lines_target[j1:j2]:
+                print("+ " + line)
+        else:
+            raise Exception("Invalid diff operation.")
+
+
+T = TypeVar("T", bound="Diffable")
+
+
+class Diffable(Protocol):
+    def __eq__(self: T, other: Any) -> bool:
+        ...
+
+    def __lt__(self: T, other: T) -> bool:
+        ...
+
+    def get_id(self: T) -> int | str:
+        ...
+
+    def format_toml(self: T) -> str:
+        ...
+
+
+@dataclass(frozen=True)
+class DiffEntry(Generic[T]):
+    actual: T
+    target: T
+
+
+@dataclass(frozen=True)
+class Diff(Generic[T]):
+    to_add: List[T]
+    to_remove: List[T]
+    to_change: List[DiffEntry[T]]
+
+    @staticmethod
+    def new(target: Set[T], actual: Set[T]) -> Diff[T]:
+        # A very basic diff is to just look at everything that needs to be added
+        # and removed, without deeper inspection.
+        to_add = sorted(target - actual)
+        to_remove = sorted(actual - target)
+
+        # However, that produces a very rough diff. If we change e.g. the
+        # description of a group, that would show up as deleting one group and
+        # adding back another which is almost the same, except with a different
+        # description. So to improve on this a bit, if entries have ids, and
+        # the same id needs to be both added and removed, then instead we record
+        # that as a "change".
+        to_add_by_id = {x.get_id(): x for x in to_add}
+        to_remove_by_id = {x.get_id(): x for x in to_remove}
+        to_change = [
+            DiffEntry(
+                actual=to_remove_by_id[id_],
+                target=to_add_by_id[id_],
+            )
+            for id_ in sorted(to_add_by_id.keys() & to_remove_by_id.keys())
+        ]
+
+        # Now that we turned some add/remove pairs into a "change", we should no
+        # longer count those as added/removed.
+        for change in to_change:
+            to_add.remove(change.target)
+            to_remove.remove(change.actual)
+
+        return Diff(
+            to_add=to_add,
+            to_remove=to_remove,
+            to_change=to_change,
+        )
+
+    def print_diff(
+        self,
+        header_to_add: str,
+        header_to_remove: str,
+        header_to_change: str,
+    ) -> None:
+        if len(self.to_add) > 0:
+            print(header_to_add)
+            for entry in self.to_add:
+                print()
+                print_indented(entry.format_toml())
+
+            print()
+
+        if len(self.to_remove) > 0:
+            print(header_to_remove)
+            for entry in self.to_remove:
+                print()
+                print_indented(entry.format_toml())
+
+            print()
+
+        if len(self.to_change) > 0:
+            print(header_to_change)
+            for change in self.to_change:
+                print()
+                print_simple_diff(
+                    actual=change.actual.format_toml(),
+                    target=change.target.format_toml(),
+                )
+
+            print()
+
+def print_group_members_diff(
+    *,
+    group_name: str,
+    target_fname: str,
+    target_members: Set[GroupMember],
+    actual_members: Set[GroupMember],
+) -> None:
+    members_diff = Diff.new(
+        target=target_members,
+        actual=actual_members,
+    )
+    if len(members_diff.to_remove) > 0:
+        print(
+            f"The following members of group '{group_name}' are not specified "
+            f"in {target_fname}, but are present on Bitwarden:\n"
+        )
+        for member in sorted(members_diff.to_remove):
+            print(f"  {member.member_name}")
+        print()
+
+    if len(members_diff.to_add) > 0:
+        print(
+            f"The following members of group '{group_name}' are specified "
+            f"in {target_fname}, but are not present on Bitwarden:\n"
+        )
+        for member in sorted(members_diff.to_add):
+            print(f"  {member.member_name}")
+        print()
