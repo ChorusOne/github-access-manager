@@ -233,6 +233,7 @@ class Collection(NamedTuple):
             ),
       )
 
+
 class BitwardenClient(NamedTuple):
     connection: HTTPSConnection
     bearer_token: str
@@ -317,7 +318,7 @@ class BitwardenClient(NamedTuple):
                     readOnly=group["readOnly"],
                 )
 
-    def get_group_members(self, id: str, name: str) -> Iterable[str]:
+    def get_group_members(self, id: str, name: str) -> Iterable[GroupMember]:
         members = json.load(self._http_get(f"/public/groups/{id}/member-ids"))
 
         for member in members:
@@ -345,7 +346,7 @@ class BitwardenClient(NamedTuple):
 class Configuration(NamedTuple):
     collection: Set[Collection]
     member: Set[Member]
-    group: Set(Group)
+    group: Set[Group]
     group_memberships: Set[GroupMember]
 
     @staticmethod
