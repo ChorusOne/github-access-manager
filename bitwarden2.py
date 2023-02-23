@@ -480,3 +480,32 @@ def print_group_members_diff(
         for member in sorted(members_diff.to_add):
             print(f"  {member.member_name}")
         print()
+
+def main() -> None:
+    if "--help" in sys.argv:
+        print(__doc__)
+        sys.exit(0)
+
+    client_id = os.getenv("BITWARDEN_CLIENT_ID")
+    if client_id is None:
+        print("Expected BITWARDEN_CLIENT_ID environment variable to be set.")
+        print("See also --help.")
+        sys.exit(1)
+
+    client_secret = os.getenv("BITWARDEN_CLIENT_SECRET")
+    if client_secret is None:
+        print("Expected BITWARDEN_CLIENT_SECRET environment variable to be set.")
+        print("See also --help.")
+        sys.exit(1)
+
+    if len(sys.argv) < 2:
+        print("Expected file name of config toml as first argument.")
+        print("See also --help.")
+        sys.exit(1)
+
+    target_fname = sys.argv[1]
+    target = Configuration.from_toml_file(target_fname)
+    client = BitwardenClient.new(client_id, client_secret)
+
+if __name__ == "__main__":
+    main()
