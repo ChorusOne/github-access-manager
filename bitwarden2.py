@@ -288,3 +288,36 @@ class BitwardenClient(NamedTuple):
                 type=member["type"],
                 accessAll=member["accessAll"],
             )
+
+class Configuration(NamedTuple):
+    collection: Set[Collection]
+    member: Set[Member]
+    group: Set(Group)
+    group_memberships: Set[GroupMember]
+
+    @staticmethod
+    def from_toml_dict(data: Dict[str, Any]) -> Configuration:
+        collection = {Collection.from_toml_dict(c) for c in data["collection"]}
+        member = {Member.from_toml_dict(m) for m in data["member"]}
+        group = {Group.from_toml_dict(m) for m in data["group"]}
+        group_memberships = {
+            GroupMember(
+                member_id=member["member_id"],
+                member_name=member["member_name"],
+                group_name=group,
+            )
+            for member in data["member"]
+            for group in member.get("groups", [])
+        }
+        return Configuration(
+            collection=collection,
+            member=member,
+            group=group,
+            group_memberships=group_memberships,
+        )
+
+    @staticmethod
+    def from_toml_file(fname: str) -> Configuration:
+        with open(fname, "rb") as f:
+            data = tomllib.load(f)
+            return Configuration.from_toml_dict(data)
