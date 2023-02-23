@@ -233,6 +233,35 @@ class Collection(NamedTuple):
             ),
       )
 
+    def format_toml(self) -> str:
+        member_access_lines = ["  " + a.format_toml() for a in sorted(self.member_access)]
+        group_access_lines = ["  " + a.format_toml() for a in sorted(self.group_access)]
+        result = (
+            "[[collection]]\n"
+            f"collection_id = {self.id}\n"
+            # Splicing the string is safe here, because Bitwarden repo names are
+            # very restrictive and do not contain quotes.
+            f'external_id = "{self.externalId}"\n'
+        )
+
+        # For the defaults, you might omit visibility, but when we start
+        # printing diffs, then we diff against a concrete target, which does
+        # need to have a visibility.
+        if len(member_access_lines) > 0:
+            result = (
+                result + "member_access = [\n" + ",\n".join(member_access_lines) + ",\n]\n"
+            )
+        else:
+            result = result + "member_access = []\n"
+
+        if len(group_access_lines) > 0:
+            result = (
+                result + "group_access = [\n" + ",\n".join(group_access_lines) + ",\n]"
+            )
+        else:
+            result = result + "group_access = []"
+
+        return result
 
 class BitwardenClient(NamedTuple):
     connection: HTTPSConnection
