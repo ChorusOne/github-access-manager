@@ -10,7 +10,7 @@ member_id = "2564c11f-fc1b-4ec7-aa0b-afaf00a9e4a4"
 member_name = "yan"
 email = "yan.68@hotmail.fr"
 type = 2 # member
-accessAll = false
+access_all = false
 groups = ["group1", "group2"]
 
 [[member]]
@@ -18,18 +18,18 @@ member_id = "856cba2d-cae1-40e7-96cc-afaf00a8a4cb"
 member_name = "yunkel"
 email = "yunkel68@hotmail.fr"
 type = 0 # owner
-accessAll = true
+access_all = true
 groups = ["group1"]
 
 [[group]]
 group_id = "c6a13b93-edc1-4c3b-9fc5-afaf00a8d33f"
 group_name = "group1"
-accessAll = false
+access_all = false
 
 [[group]]
 group_id = "39b48ab2-81fd-40eb-87e9-afb0000110f3"
 group_name = "group2"
-accessAll = false
+access_all = false
 
 [[collection]]
 collection_id = "50351c20-55b4-4ee8-bbe0-afaf00a8f25d"
@@ -38,8 +38,8 @@ member_access = [
   { member_id = "2564c11f-fc1b-4ec7-aa0b-afaf00a9e4a4", member_name = "yan", group = "c6a13b93-edc1-4c3b-9fc5-afaf00a8d33f" },
   ]
 group_access = [
-  { group_id = "c6a13b93-edc1-4c3b-9fc5-afaf00a8d33f", group_name = "group1", readOnly = true },
-  { group_id = "39b48ab2-81fd-40eb-87e9-afb0000110f3", group_name = "group2", readOnly = true },
+  { group_id = "c6a13b93-edc1-4c3b-9fc5-afaf00a8d33f", group_name = "group1", read_only = true },
+  { group_id = "39b48ab2-81fd-40eb-87e9-afb0000110f3", group_name = "group2", read_only = true },
 ]
 
 [[collection]]
@@ -49,7 +49,7 @@ member_access = [
   { member_id = "2564c11f-fc1b-4ec7-aa0b-afaf00a9e4a4", member_name = "yan", group = "c6a13b93-edc1-4c3b-9fc5-afaf00a8d33f" },
 ]
 group_access = [
-  { group_id = "c6a13b93-edc1-4c3b-9fc5-afaf00a8d33f", group_name = "group1", readOnly = false },
+  { group_id = "c6a13b93-edc1-4c3b-9fc5-afaf00a8d33f", group_name = "group1", read_only = false },
 ]
 """
 
@@ -81,7 +81,7 @@ class Member(NamedTuple):
     name: str
     email: str
     type: int
-    accessAll: bool
+    access_all: bool
     # groups: Tuple[str, ...]
 
     def get_id(self) -> str:
@@ -94,7 +94,7 @@ class Member(NamedTuple):
             name=data["member_name"],
             email = data["email"],
             type = data["type"],
-            accessAll = data["accessAll"],
+            access_all = data["access_all"],
         )
 
     def format_toml(self) -> str:
@@ -104,7 +104,7 @@ class Member(NamedTuple):
             f"member_name = {self.name}",
             f"email = {self.email}",
             f"type = {str(self.type)}",
-            f"accessAll = {str(self.accessAll)}",
+            f"access_all = {str(self.access_all)}",
         ]
         return "\n".join(lines)
 
@@ -130,7 +130,7 @@ class GroupMember(NamedTuple):
 class Group(NamedTuple):
     id: str
     name: str
-    accessAll: bool
+    access_all: bool
 
     def get_id(self) -> str:
         return self.id
@@ -140,7 +140,7 @@ class Group(NamedTuple):
         return Group(
             id=data["group_id"],
             name=data["group_name"],
-            accessAll = data["accessAll"],
+            access_all = data["access_all"],
         )
 
     def format_toml(self) -> str:
@@ -148,7 +148,7 @@ class Group(NamedTuple):
             "[[group]]",
             f"group_id = {self.id}",
             f"group_name = {self.name}",
-            f"accessAll = {str(self.accessAll)}",
+            f"access_all = {str(self.access_all)}",
         ]
         return "\n".join(lines)
 
@@ -183,7 +183,7 @@ class MemberCollectionAccess(NamedTuple):
 class GroupCollectionAccess(NamedTuple):
     id: str
     name: str
-    readOnly: bool
+    read_only: bool
 
     def get_id(self) -> str:
         return self.id
@@ -193,7 +193,7 @@ class GroupCollectionAccess(NamedTuple):
         return GroupCollectionAccess(
             id=data["group_id"],
             name=data["group_name"],
-            readOnly=data["readOnly"],
+            read_only=data["read_only"],
         )
 
     def format_toml(self) -> str:
@@ -202,14 +202,14 @@ class GroupCollectionAccess(NamedTuple):
             + self.id
             + ', group_name = "'
             + self.name
-            + '", readOnly = "'
-            + str(self.readOnly)
+            + '", read_only = "'
+            + str(self.read_only)
             + '" }'
         )
 
 class Collection(NamedTuple):
     id: str
-    externalId: str
+    external_id: str
     group_access: Tuple[GroupCollectionAccess, ...]
     member_access: Tuple[MemberCollectionAccess, ...]
 
@@ -220,7 +220,7 @@ class Collection(NamedTuple):
     def from_toml_dict(data: Dict[str, Any]) -> Collection:
         return Collection(
             id=data["collection_id"],
-            externalId=data["external_id"],
+            external_id=data["external_id"],
             group_access=tuple(
                 sorted(
                     GroupCollectionAccess.from_toml_dict(x) for x in data["group_access"]
@@ -241,7 +241,7 @@ class Collection(NamedTuple):
             f"collection_id = {self.id}\n"
             # Splicing the string is safe here, because Bitwarden repo names are
             # very restrictive and do not contain quotes.
-            f'external_id = "{self.externalId}"\n'
+            f'external_id = "{self.external_id}"\n'
         )
 
         # For the defaults, you might omit visibility, but when we start
@@ -304,7 +304,7 @@ class BitwardenClient(NamedTuple):
             yield Group(
                 id=group["id"],
                 name=group["name"],
-                accessAll=group["accessAll"],
+                access_all=group["accessAll"],
             )
 
     def get_collection_members(self, groups: Tuple[GroupCollectionAccess, ...]) -> Iterable[MemberCollectionAccess]:
@@ -331,7 +331,7 @@ class BitwardenClient(NamedTuple):
 
             yield Collection(
                 id=collection["id"],
-                externalId=collection["externalId"],
+                external_id=collection["externalId"],
                 member_access=member_accesses,
                 group_access=group_accesses,
             )
@@ -344,7 +344,7 @@ class BitwardenClient(NamedTuple):
                 yield GroupCollectionAccess(
                     id=group["id"],
                     name=self.get_group(group["id"])["name"],
-                    readOnly=group["readOnly"],
+                    read_only=group["readOnly"],
                 )
 
     def get_group_members(self, id: str, name: str) -> Iterable[GroupMember]:
@@ -369,7 +369,7 @@ class BitwardenClient(NamedTuple):
                 name=member["name"],
                 email=member["email"],
                 type=member["type"],
-                accessAll=member["accessAll"],
+                access_all=member["accessAll"],
             )
 
 class Configuration(NamedTuple):
