@@ -1,5 +1,58 @@
 #!/usr/bin/env python3
 
+"""
+Bitwarden Access Manager
+
+CONFIGURATION
+
+[[member]]
+member_id = "2564c11f-fc1b-4ec7-aa0b-afaf00a9e4a4"
+member_name = "yan"
+email = "yan.68@hotmail.fr"
+type = 2 # member
+accessAll = false
+groups = ["group1", "group2"]
+
+[[member]]
+member_id = "856cba2d-cae1-40e7-96cc-afaf00a8a4cb"
+member_name = "yunkel"
+email = "yunkel68@hotmail.fr"
+type = 0 # owner
+accessAll = true
+groups = ["group1"]
+
+[[group]]
+group_id = "c6a13b93-edc1-4c3b-9fc5-afaf00a8d33f"
+group_name = "group1"
+accessAll = false
+
+[[group]]
+group_id = "39b48ab2-81fd-40eb-87e9-afb0000110f3"
+group_name = "group2"
+accessAll = false
+
+[[collection]]
+collection_id = "50351c20-55b4-4ee8-bbe0-afaf00a8f25d"
+external_id = "collection1"
+member_access = [
+  { member_id = "2564c11f-fc1b-4ec7-aa0b-afaf00a9e4a4", member_name = "yan", group = "c6a13b93-edc1-4c3b-9fc5-afaf00a8d33f" },
+  ]
+group_access = [
+  { group_id = "c6a13b93-edc1-4c3b-9fc5-afaf00a8d33f", group_name = "group1", readOnly = true },
+  { group_id = "39b48ab2-81fd-40eb-87e9-afb0000110f3", group_name = "group2", readOnly = true },
+]
+
+[[collection]]
+collection_id = "8e69ce49-85ae-4e09-a52c-afaf00a90a3f"
+external_id = ""
+member_access = [
+  { member_id = "2564c11f-fc1b-4ec7-aa0b-afaf00a9e4a4", member_name = "yan", group = "c6a13b93-edc1-4c3b-9fc5-afaf00a8d33f" },
+]
+group_access = [
+  { group_id = "c6a13b93-edc1-4c3b-9fc5-afaf00a8d33f", group_name = "group1", readOnly = false },
+]
+"""
+
 from __future__ import annotations
 from dataclasses import dataclass
 from difflib import SequenceMatcher
