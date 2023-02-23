@@ -507,5 +507,45 @@ def main() -> None:
     target = Configuration.from_toml_file(target_fname)
     client = BitwardenClient.new(client_id, client_secret)
 
+    current_collections = set(client.get_collections())
+    collections_diff = Diff.new(target=target.collection, actual=current_collections)
+    collections_diff.print_diff(
+        f"The following collections are specified in {target_fname} but not a member of the Bitwarden organization:",
+        f"The following collections are not specified in {target_fname} but are a member of the Bitwarden organization:",
+        f"The following collections on Bitwarden need to be changed to match {target_fname}:",
+    )
+
+    current_members = set(client.get_members())
+    members_diff = Diff.new(target=target.member, actual=current_members)
+    members_diff.print_diff(
+        f"The following members are specified in {target_fname} but not a member of the Bitwarden organization:",
+        f"The following members are not specified in {target_fname} but are a member of the Bitwarden organization:",
+        f"The following members on Bitwarden need to be changed to match {target_fname}:",
+    )
+
+    current_groups = set(client.get_groups())
+    groups_diff = Diff.new(target=target.group, actual=current_groups)
+    groups_diff.print_diff(
+        f"The following groups specified in {target_fname} are not present on Bitwarden:",
+        f"The following groups are not specified in {target_fname} but are present on Bitwarden:",
+        f"The following groups on Bitwarden need to be changed to match {target_fname}:",
+    )
+
+    # For all the groups which we want to exist, and which do actually exist,
+    # compare their members.
+    target_groups_names = {group.name for group in target.group}
+    existing_desired_groups = [
+        group for group in current_groups if group.name in target_groups_names
+    ]
+    for group in existing_desired_groups:
+        print_group_members_diff(
+            group_name=group.name,
+            target_fname=target_fname,
+            target_members={
+                m for m in target.group_memberships if m.group_name == group.name
+            },
+            actual_members=set(client.get_group_members(group.id, group.name)),
+        )
+
 if __name__ == "__main__":
     main()
