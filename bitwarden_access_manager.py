@@ -69,6 +69,7 @@ from typing import (
     Dict,
     List,
     Generic,
+    Optional,
     Tuple,
     NamedTuple,
     Set,
@@ -80,8 +81,8 @@ class Member(NamedTuple):
     id: str
     name: str
     email: str
-    type: int
-    access_all: bool
+    type: str
+    access_all: Optional[bool]
     # groups: Tuple[str, ...]
 
     def get_id(self) -> str:
@@ -89,12 +90,15 @@ class Member(NamedTuple):
 
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> Member:
+        access_all: Optional[bool] = False
+        if "access_all" in data:
+            access_all = data["access_all"]
         return Member(
             id=data["member_id"],
             name=data["member_name"],
             email = data["email"],
             type = data["type"],
-            access_all = data["access_all"],
+            access_all = access_all,
         )
 
     def format_toml(self) -> str:
@@ -104,7 +108,7 @@ class Member(NamedTuple):
             f"member_name = {self.name}",
             f"email = {self.email}",
             f"type = {str(self.type)}",
-            f"access_all = {str(self.access_all)}",
+            f"access_all = {str(self.access_all).lower()}",
         ]
         return "\n".join(lines)
 
@@ -358,17 +362,33 @@ class BitwardenClient(NamedTuple):
                 group_name=name,
             )
 
+    def set_member_type(self, type_id: int) -> str:
+        match type_id:
+            case 0:
+                type="owner"
+            case 1:
+                type="admin"
+            case 2:
+                type="user"
+            case 3:
+                type="manager"
+            case 4:
+                type="custom"
+        return type
+
     def get_members(self) -> Iterable[Member]:
         data = self._http_get(f"/public/members")
         members= json.load(data)
 
         for member in members["data"]:
 
+            type=self.set_member_type(member["type"])
+
             yield Member(
                 id=member["id"],
                 name=member["name"],
                 email=member["email"],
-                type=member["type"],
+                type=type,
                 access_all=member["accessAll"],
             )
 
