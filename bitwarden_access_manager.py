@@ -187,7 +187,7 @@ class MemberCollectionAccess(NamedTuple):
 class GroupCollectionAccess(NamedTuple):
     id: str
     name: str
-    read_only: bool
+    access: str
 
     def get_id(self) -> str:
         return self.id
@@ -197,7 +197,7 @@ class GroupCollectionAccess(NamedTuple):
         return GroupCollectionAccess(
             id=data["group_id"],
             name=data["group_name"],
-            read_only=data["read_only"],
+            access=data["access"],
         )
 
     def format_toml(self) -> str:
@@ -206,8 +206,8 @@ class GroupCollectionAccess(NamedTuple):
             + self.id
             + ', group_name = "'
             + self.name
-            + '", read_only = "'
-            + str(self.read_only)
+            + '", access = "'
+            + self.access
             + '" }'
         )
 
@@ -271,7 +271,6 @@ class Collection(NamedTuple):
                 )
             else:
                 result = result + "group_access = []"
-        print(result)
         return result
 
 class BitwardenClient(NamedTuple):
@@ -360,10 +359,15 @@ class BitwardenClient(NamedTuple):
             collection = json.load(data)
 
             for group in collection["groups"]:
+                if group["readOnly"] == True:
+                    access = "readonly"
+                else:
+                    access = "write"
+
                 yield GroupCollectionAccess(
                     id=group["id"],
                     name=self.get_group(group["id"])["name"],
-                    read_only=group["readOnly"],
+                    access=access,
                 )
 
     def get_group_members(self, id: str, name: str) -> Iterable[GroupMember]:
