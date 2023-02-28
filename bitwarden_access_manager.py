@@ -214,32 +214,38 @@ class GroupCollectionAccess(NamedTuple):
 class Collection(NamedTuple):
     id: str
     external_id: str
-    group_access: Tuple[GroupCollectionAccess, ...]
-    member_access: Tuple[MemberCollectionAccess, ...]
+    group_access: Optional[Tuple[GroupCollectionAccess, ...]]
+    member_access: Optional[Tuple[MemberCollectionAccess, ...]]
 
     def get_id(self) -> str:
         return self.id
 
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> Collection:
-        return Collection(
-            id=data["collection_id"],
-            external_id=data["external_id"],
-            group_access=tuple(
+        group_access: Optional[Tuple[GroupCollectionAccess, ...]] = None
+        if "group_access" in data:
+            group_access = tuple(
                 sorted(
                     GroupCollectionAccess.from_toml_dict(x) for x in data["group_access"]
                 )
-            ),
-            member_access=tuple(
+            )
+
+        member_access: Optional[Tuple[MemberCollectionAccess, ...]] = None
+        if "member_access" in data:
+            member_access = tuple(
                 sorted(
                     MemberCollectionAccess.from_toml_dict(x) for x in data["member_access"]
                 )
-            ),
+            )
+
+        return Collection(
+            id=data["collection_id"],
+            external_id=data["external_id"],
+            group_access=group_access,
+            member_access=member_access,
       )
 
     def format_toml(self) -> str:
-        member_access_lines = ["  " + a.format_toml() for a in sorted(self.member_access)]
-        group_access_lines = ["  " + a.format_toml() for a in sorted(self.group_access)]
         result = (
             "[[collection]]\n"
             f"collection_id = {self.id}\n"
@@ -248,23 +254,24 @@ class Collection(NamedTuple):
             f'external_id = "{self.external_id}"\n'
         )
 
-        # For the defaults, you might omit visibility, but when we start
-        # printing diffs, then we diff against a concrete target, which does
-        # need to have a visibility.
-        if len(member_access_lines) > 0:
-            result = (
-                result + "member_access = [\n" + ",\n".join(member_access_lines) + ",\n]\n"
-            )
-        else:
-            result = result + "member_access = []\n"
+        if self.member_access is not None:
+            member_access_lines = ["  " + a.format_toml() for a in sorted(self.member_access)]
+            if len(member_access_lines) > 0:
+                result = (
+                    result + "member_access = [\n" + ",\n".join(member_access_lines) + ",\n]\n"
+                )
+            else:
+                result = result + "member_access = []\n"
 
-        if len(group_access_lines) > 0:
-            result = (
-                result + "group_access = [\n" + ",\n".join(group_access_lines) + ",\n]"
-            )
-        else:
-            result = result + "group_access = []"
-
+        if self.group_access is not None:
+            group_access_lines = ["  " + a.format_toml() for a in sorted(self.group_access)]
+            if len(group_access_lines) > 0:
+                result = (
+                    result + "group_access = [\n" + ",\n".join(group_access_lines) + ",\n]"
+                )
+            else:
+                result = result + "group_access = []"
+        print(result)
         return result
 
 class BitwardenClient(NamedTuple):
@@ -330,8 +337,16 @@ class BitwardenClient(NamedTuple):
         collections = json.load(data)
 
         for collection in collections["data"]:
-            group_accesses = tuple(sorted(self.get_collection_groups(collection["id"])))
-            member_accesses = tuple(sorted(self.get_collection_members(group_accesses)))
+            group_accesses: Optional[Tuple[GroupCollectionAccess, ...]] = None
+            member_accesses: Optional[Tuple[MemberCollectionAccess, ...]] = None
+
+            group_accesses_data = tuple(sorted(self.get_collection_groups(collection["id"])))
+
+            if group_accesses_data:
+                group_accesses = group_accesses_data
+                member_accesses_data = tuple(sorted(self.get_collection_members(group_accesses_data)))
+                if member_accesses_data:
+                    member_accesses = member_accesses_data
 
             yield Collection(
                 id=collection["id"],
