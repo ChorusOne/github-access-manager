@@ -134,17 +134,21 @@ class GroupMember(NamedTuple):
 class Group(NamedTuple):
     id: str
     name: str
-    access_all: bool
+    access_all: Optional[bool]
 
     def get_id(self) -> str:
         return self.id
 
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> Group:
+        access_all: Optional[bool] = False
+        if "access_all" in data:
+            access_all = data["access_all"]
+
         return Group(
             id=data["group_id"],
             name=data["group_name"],
-            access_all = data["access_all"],
+            access_all = access_all,
         )
 
     def format_toml(self) -> str:
@@ -152,7 +156,7 @@ class Group(NamedTuple):
             "[[group]]",
             f"group_id = {self.id}",
             f"group_name = {self.name}",
-            f"access_all = {str(self.access_all)}",
+            f"access_all = {str(self.access_all).lower()}",
         ]
         return "\n".join(lines)
 
