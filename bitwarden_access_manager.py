@@ -303,12 +303,8 @@ class BitwardenClient(NamedTuple):
 
         return self.connection.getresponse()
 
-    def get_group(self, id: str) -> Any:
-        return json.load(self._http_get(f"/public/groups/{id}"))
-
     def get_groups(self) -> Iterable[Group]:
-        data = self._http_get(f"/public/groups")
-        groups = json.load(data)
+        groups = json.load(self._http_get(f"/public/groups"))
         for group in groups["data"]:
             yield Group(
                 id=group["id"],
@@ -320,12 +316,10 @@ class BitwardenClient(NamedTuple):
         for group in groups:
             group_id = group["id"]
 
-            data = self._http_get(f"/public/groups/{group_id}/member-ids")
-            member_ids = json.load(data)
+            member_ids = json.load(self._http_get(f"/public/groups/{group_id}/member-ids"))
 
             for member_id in member_ids:
-                data = self._http_get(f"/public/members/{member_id}")
-                member = json.load(data)
+                member = json.load(self._http_get(f"/public/members/{member_id}"))
                 yield MemberCollectionAccess(
                     name=member["name"],
                 )
@@ -337,28 +331,25 @@ class BitwardenClient(NamedTuple):
             else:
                 access = "write"
 
+            group_id = group["id"]
             yield GroupCollectionAccess(
-                name=self.get_group(group["id"])["name"],
+                name=json.load(self._http_get(f"/public/groups/{group_id}"))["name"],
                 access=access,
             )
 
     def get_member_collections(self, members: Tuple[MemberCollectionAccess, ...]):
         for member in members:
-            data = self._http_get(f"/public/members/{member.id}")
-            member = json.load(data)
-            print(member)
-
-    def get_collection(self, id: str) -> Any:
-        return json.load(self._http_get(f"/public/collections/{id}"))
+            member = json.load(self._http_get(f"/public/members/{member.id}"))
 
     def get_collections(self) -> Iterable[Collection]:
-        data = self._http_get(f"/public/collections")
-        collections = json.load(data)
+        collections = json.load(self._http_get(f"/public/collections"))
 
         for collection in collections["data"]:
             group_accesses: Optional[Tuple[GroupCollectionAccess, ...]] = None
             member_accesses: Optional[Tuple[MemberCollectionAccess, ...]] = None
-            collection_data = self.get_collection(collection["id"])
+            collection_id = collection["id"]
+
+            collection_data = json.load(self._http_get(f"/public/collections/{collection_id}"))
 
             group_accesses_data = tuple(
                 sorted(self.get_collection_groups(collection_data["groups"]))
