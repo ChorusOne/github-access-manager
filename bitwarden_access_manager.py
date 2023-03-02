@@ -82,7 +82,7 @@ class Member(NamedTuple):
     name: str
     email: str
     type: str
-    access_all: Optional[bool]
+    access_all: bool
     # groups: Tuple[str, ...]
 
     def get_id(self) -> str:
@@ -90,7 +90,7 @@ class Member(NamedTuple):
 
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> Member:
-        access_all: Optional[bool] = False
+        access_all: bool = False
         if "access_all" in data:
             access_all = data["access_all"]
         return Member(
@@ -134,14 +134,14 @@ class GroupMember(NamedTuple):
 class Group(NamedTuple):
     id: str
     name: str
-    access_all: Optional[bool]
+    access_all: bool
 
     def get_id(self) -> str:
         return self.id
 
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> Group:
-        access_all: Optional[bool] = False
+        access_all: bool = False
         if "access_all" in data:
             access_all = data["access_all"]
 
@@ -337,7 +337,6 @@ class BitwardenClient(NamedTuple):
                 )
 
     def get_member_collections(self, members: Tuple[MemberCollectionAccess, ...]):
-        print("JERE")
         for member in members:
             data = self._http_get(f"/public/members/{member.id}")
             member = json.load(data)
