@@ -9,16 +9,15 @@ CONFIGURATION
 member_id = "2564c11f-fc1b-4ec7-aa0b-afaf00a9e4a4"
 member_name = "yan"
 email = "yan.68@hotmail.fr"
-type = 2 # member
-access_all = false
+type = "member"
 groups = ["group1", "group2"]
 
 [[member]]
 member_id = "856cba2d-cae1-40e7-96cc-afaf00a8a4cb"
 member_name = "yunkel"
 email = "yunkel68@hotmail.fr"
-type = 0 # owner
-access_all = true
+type = "owner"
+access_all = true # access_all is optional, default is false
 groups = ["group1"]
 
 [[group]]
