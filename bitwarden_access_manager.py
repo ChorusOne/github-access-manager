@@ -168,9 +168,6 @@ class Group(NamedTuple):
 class MemberCollectionAccess(NamedTuple):
     name: str
 
-    def get_id(self) -> str:
-        return self.id
-
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> MemberCollectionAccess:
         return MemberCollectionAccess(
@@ -184,9 +181,6 @@ class MemberCollectionAccess(NamedTuple):
 class GroupCollectionAccess(NamedTuple):
     name: str
     access: str
-
-    def get_id(self) -> str:
-        return self.id
 
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> GroupCollectionAccess:
@@ -336,10 +330,6 @@ class BitwardenClient(NamedTuple):
                 name=json.load(self._http_get(f"/public/groups/{group_id}"))["name"],
                 access=access,
             )
-
-    def get_member_collections(self, members: Tuple[MemberCollectionAccess, ...]):
-        for member in members:
-            member = json.load(self._http_get(f"/public/members/{member.id}"))
 
     def get_collections(self) -> Iterable[Collection]:
         collections = json.load(self._http_get(f"/public/collections"))
