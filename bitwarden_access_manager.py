@@ -239,8 +239,6 @@ class Collection(NamedTuple):
         result = (
             "[[collection]]\n"
             f"collection_id = {self.id}\n"
-            # Splicing the string is safe here, because Bitwarden repo names are
-            # very restrictive and do not contain quotes.
             f'external_id = "{self.external_id}"\n'
         )
 
