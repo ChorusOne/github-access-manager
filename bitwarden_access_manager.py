@@ -77,6 +77,8 @@ from typing import (
     Protocol,
     TypeVar,
 )
+
+
 class Member(NamedTuple):
     id: str
     name: str
@@ -96,9 +98,9 @@ class Member(NamedTuple):
         return Member(
             id=data["member_id"],
             name=data["member_name"],
-            email = data["email"],
-            type = data["type"],
-            access_all = access_all,
+            email=data["email"],
+            type=data["type"],
+            access_all=access_all,
         )
 
     def format_toml(self) -> str:
@@ -111,6 +113,7 @@ class Member(NamedTuple):
             f"access_all = {str(self.access_all).lower()}",
         ]
         return "\n".join(lines)
+
 
 class GroupMember(NamedTuple):
     member_id: int
@@ -131,6 +134,7 @@ class GroupMember(NamedTuple):
             "please print the diffs in some other way."
         )
 
+
 class Group(NamedTuple):
     id: str
     name: str
@@ -148,7 +152,7 @@ class Group(NamedTuple):
         return Group(
             id=data["group_id"],
             name=data["group_name"],
-            access_all = access_all,
+            access_all=access_all,
         )
 
     def format_toml(self) -> str:
@@ -174,11 +178,8 @@ class MemberCollectionAccess(NamedTuple):
         )
 
     def format_toml(self) -> str:
-        return (
-            "{ member_name = "
-            + self.name
-            + '"}'
-        )
+        return "{ member_name = " + self.name + '"}'
+
 
 class GroupCollectionAccess(NamedTuple):
     name: str
@@ -195,13 +196,8 @@ class GroupCollectionAccess(NamedTuple):
         )
 
     def format_toml(self) -> str:
-        return (
-            "{ group_name = "
-            + self.name
-            + '", access = "'
-            + self.access
-            + '" }'
-        )
+        return "{ group_name = " + self.name + '", access = "' + self.access + '" }'
+
 
 class Collection(NamedTuple):
     id: str
@@ -218,7 +214,8 @@ class Collection(NamedTuple):
         if "group_access" in data:
             group_access = tuple(
                 sorted(
-                    GroupCollectionAccess.from_toml_dict(x) for x in data["group_access"]
+                    GroupCollectionAccess.from_toml_dict(x)
+                    for x in data["group_access"]
                 )
             )
 
@@ -226,7 +223,8 @@ class Collection(NamedTuple):
         if "member_access" in data:
             member_access = tuple(
                 sorted(
-                    MemberCollectionAccess.from_toml_dict(x) for x in data["member_access"]
+                    MemberCollectionAccess.from_toml_dict(x)
+                    for x in data["member_access"]
                 )
             )
 
@@ -235,7 +233,7 @@ class Collection(NamedTuple):
             external_id=data["external_id"],
             group_access=group_access,
             member_access=member_access,
-      )
+        )
 
     def format_toml(self) -> str:
         result = (
@@ -247,23 +245,34 @@ class Collection(NamedTuple):
         )
 
         if self.member_access is not None:
-            member_access_lines = ["  " + a.format_toml() for a in sorted(self.member_access)]
+            member_access_lines = [
+                "  " + a.format_toml() for a in sorted(self.member_access)
+            ]
             if len(member_access_lines) > 0:
                 result = (
-                    result + "member_access = [\n" + ",\n".join(member_access_lines) + ",\n]\n"
+                    result
+                    + "member_access = [\n"
+                    + ",\n".join(member_access_lines)
+                    + ",\n]\n"
                 )
             else:
                 result = result + "member_access = []\n"
 
         if self.group_access is not None:
-            group_access_lines = ["  " + a.format_toml() for a in sorted(self.group_access)]
+            group_access_lines = [
+                "  " + a.format_toml() for a in sorted(self.group_access)
+            ]
             if len(group_access_lines) > 0:
                 result = (
-                    result + "group_access = [\n" + ",\n".join(group_access_lines) + ",\n]"
+                    result
+                    + "group_access = [\n"
+                    + ",\n".join(group_access_lines)
+                    + ",\n]"
                 )
             else:
                 result = result + "group_access = []"
         return result
+
 
 class BitwardenClient(NamedTuple):
     connection: HTTPSConnection
@@ -273,7 +282,7 @@ class BitwardenClient(NamedTuple):
     def new(client_id: str, client_secret: str) -> BitwardenClient:
         response = requests.post(
             "https://identity.bitwarden.com/connect/token",
-            headers={ "Content-Type": "application/x-www-form-urlencoded" },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
             data={
                 "grant_type": "client_credentials",
                 "scope": "api.organization",
@@ -310,31 +319,30 @@ class BitwardenClient(NamedTuple):
             )
 
     def get_collection_members(self, groups: Any) -> Iterable[MemberCollectionAccess]:
-            for group in groups:
-                group_id = group["id"]
+        for group in groups:
+            group_id = group["id"]
 
-                data = self._http_get(f"/public/groups/{group_id}/member-ids")
-                member_ids = json.load(data)
+            data = self._http_get(f"/public/groups/{group_id}/member-ids")
+            member_ids = json.load(data)
 
-                for member_id in member_ids:
-                    data = self._http_get(f"/public/members/{member_id}")
-                    member = json.load(data)
-                    yield MemberCollectionAccess(
-                        name=member["name"],
-                    )
+            for member_id in member_ids:
+                data = self._http_get(f"/public/members/{member_id}")
+                member = json.load(data)
+                yield MemberCollectionAccess(
+                    name=member["name"],
+                )
 
     def get_collection_groups(self, groups: Any) -> Iterable[GroupCollectionAccess]:
+        for group in groups:
+            if group["readOnly"] == True:
+                access = "readonly"
+            else:
+                access = "write"
 
-            for group in groups:
-                if group["readOnly"] == True:
-                    access = "readonly"
-                else:
-                    access = "write"
-
-                yield GroupCollectionAccess(
-                    name=self.get_group(group["id"])["name"],
-                    access=access,
-                )
+            yield GroupCollectionAccess(
+                name=self.get_group(group["id"])["name"],
+                access=access,
+            )
 
     def get_member_collections(self, members: Tuple[MemberCollectionAccess, ...]):
         for member in members:
@@ -354,11 +362,15 @@ class BitwardenClient(NamedTuple):
             member_accesses: Optional[Tuple[MemberCollectionAccess, ...]] = None
             collection_data = self.get_collection(collection["id"])
 
-            group_accesses_data = tuple(sorted(self.get_collection_groups(collection_data["groups"])))
+            group_accesses_data = tuple(
+                sorted(self.get_collection_groups(collection_data["groups"]))
+            )
 
             if group_accesses_data:
                 group_accesses = group_accesses_data
-                member_accesses_data = tuple(sorted(self.get_collection_members(collection_data["groups"])))
+                member_accesses_data = tuple(
+                    sorted(self.get_collection_members(collection_data["groups"]))
+                )
                 if member_accesses_data:
                     member_accesses = member_accesses_data
 
@@ -383,23 +395,23 @@ class BitwardenClient(NamedTuple):
     def set_member_type(self, type_id: int) -> str:
         match type_id:
             case 0:
-                type="owner"
+                type = "owner"
             case 1:
-                type="admin"
+                type = "admin"
             case 2:
-                type="user"
+                type = "user"
             case 3:
-                type="manager"
+                type = "manager"
             case 4:
-                type="custom"
+                type = "custom"
         return type
 
     def get_members(self) -> Iterable[Member]:
         data = self._http_get(f"/public/members")
-        members= json.load(data)
+        members = json.load(data)
 
         for member in members["data"]:
-            type=self.set_member_type(member["type"])
+            type = self.set_member_type(member["type"])
 
             yield Member(
                 id=member["id"],
@@ -408,6 +420,7 @@ class BitwardenClient(NamedTuple):
                 type=type,
                 access_all=member["accessAll"],
             )
+
 
 class Configuration(NamedTuple):
     collection: Set[Collection]
@@ -441,6 +454,7 @@ class Configuration(NamedTuple):
         with open(fname, "rb") as f:
             data = tomllib.load(f)
             return Configuration.from_toml_dict(data)
+
 
 def print_indented(lines: str) -> None:
     """Print the input indented by two spaces."""
@@ -572,6 +586,7 @@ class Diff(Generic[T]):
 
             print()
 
+
 def print_group_members_diff(
     *,
     group_name: str,
@@ -600,6 +615,7 @@ def print_group_members_diff(
         for member in sorted(members_diff.to_add):
             print(f"  {member.member_name}")
         print()
+
 
 def main() -> None:
     if "--help" in sys.argv:
@@ -666,6 +682,7 @@ def main() -> None:
             },
             actual_members=set(client.get_group_members(group.id, group.name)),
         )
+
 
 if __name__ == "__main__":
     main()
