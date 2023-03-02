@@ -355,12 +355,12 @@ class BitwardenClient(NamedTuple):
                 sorted(self.get_collection_groups(collection_data["groups"]))
             )
 
-            if group_accesses_data:
+            if len(group_accesses_data) > 0:
                 group_accesses = group_accesses_data
                 member_accesses_data = tuple(
                     sorted(self.get_collection_members(collection_data["groups"]))
                 )
-                if member_accesses_data:
+                if len(member_accesses_data) > 0:
                     member_accesses = member_accesses_data
 
             yield Collection(
