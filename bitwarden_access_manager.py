@@ -55,6 +55,8 @@ group_access = [
 from __future__ import annotations
 from dataclasses import dataclass
 from difflib import SequenceMatcher
+from enum import Enum
+from http.client import HTTPSConnection, HTTPResponse
 
 import json
 import os
@@ -62,7 +64,6 @@ import requests
 import sys
 import tomllib
 
-from http.client import HTTPSConnection, HTTPResponse
 from typing import (
     Any,
     Dict,
@@ -305,16 +306,19 @@ class BitwardenClient(NamedTuple):
                 access_all=group["accessAll"],
             )
 
-    def get_collection_members(self, groups: Any) -> Iterable[MemberCollectionAccess]:
+    def get_collection_members(
+        self, groups: Any, org_members: Dict[str, Member]
+    ) -> Iterable[MemberCollectionAccess]:
         for group in groups:
             group_id = group["id"]
 
-            member_ids = json.load(self._http_get(f"/public/groups/{group_id}/member-ids"))
+            member_ids = json.load(
+                self._http_get(f"/public/groups/{group_id}/member-ids")
+            )
 
             for member_id in member_ids:
-                member = json.load(self._http_get(f"/public/members/{member_id}"))
                 yield MemberCollectionAccess(
-                    name=member["name"],
+                    name=org_members[member_id].name,
                 )
 
     def get_collection_groups(self, groups: Any) -> Iterable[GroupCollectionAccess]:
@@ -330,7 +334,7 @@ class BitwardenClient(NamedTuple):
                 access=access,
             )
 
-    def get_collections(self) -> Iterable[Collection]:
+    def get_collections(self, org_members: Dict[str, Member]) -> Iterable[Collection]:
         collections = json.load(self._http_get(f"/public/collections"))
 
         for collection in collections["data"]:
@@ -338,7 +342,9 @@ class BitwardenClient(NamedTuple):
             member_accesses: Optional[Tuple[MemberCollectionAccess, ...]] = None
             collection_id = collection["id"]
 
-            collection_data = json.load(self._http_get(f"/public/collections/{collection_id}"))
+            collection_data = json.load(
+                self._http_get(f"/public/collections/{collection_id}")
+            )
 
             group_accesses_data = tuple(
                 sorted(self.get_collection_groups(collection_data["groups"]))
@@ -347,8 +353,13 @@ class BitwardenClient(NamedTuple):
             if len(group_accesses_data) > 0:
                 group_accesses = group_accesses_data
                 member_accesses_data = tuple(
-                    sorted(self.get_collection_members(collection_data["groups"]))
+                    sorted(
+                        self.get_collection_members(
+                            groups=collection_data["groups"], org_members=org_members
+                        )
+                    )
                 )
+
                 if len(member_accesses_data) > 0:
                     member_accesses = member_accesses_data
 
@@ -621,20 +632,21 @@ def main() -> None:
     target = Configuration.from_toml_file(target_fname)
     client = BitwardenClient.new(client_id, client_secret)
 
-    current_collections = set(client.get_collections())
-    collections_diff = Diff.new(target=target.collection, actual=current_collections)
-    collections_diff.print_diff(
-        f"The following collections are specified in {target_fname} but not a member of the Bitwarden organization:",
-        f"The following collections are not specified in {target_fname} but are a member of the Bitwarden organization:",
-        f"The following collections on Bitwarden need to be changed to match {target_fname}:",
-    )
-
     current_members = set(client.get_members())
     members_diff = Diff.new(target=target.member, actual=current_members)
     members_diff.print_diff(
         f"The following members are specified in {target_fname} but not a member of the Bitwarden organization:",
         f"The following members are not specified in {target_fname} but are a member of the Bitwarden organization:",
         f"The following members on Bitwarden need to be changed to match {target_fname}:",
+    )
+
+    org_members: Dict[str, Member] = {member.id: member for member in current_members}
+    current_collections = set(client.get_collections(org_members))
+    collections_diff = Diff.new(target=target.collection, actual=current_collections)
+    collections_diff.print_diff(
+        f"The following collections are specified in {target_fname} but not a member of the Bitwarden organization:",
+        f"The following collections are not specified in {target_fname} but are a member of the Bitwarden organization:",
+        f"The following collections on Bitwarden need to be changed to match {target_fname}:",
     )
 
     current_groups = set(client.get_groups())
