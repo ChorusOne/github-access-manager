@@ -86,6 +86,9 @@ class MemberType(Enum):
     MANAGER = 3
     CUSTOM = 4
 
+class GroupAccess(Enum):
+    READONLY = 0
+    WRITE = 1
 
 class Member(NamedTuple):
     id: str
@@ -188,17 +191,17 @@ class MemberCollectionAccess(NamedTuple):
 
 class GroupCollectionAccess(NamedTuple):
     name: str
-    access: str
+    access: GroupAccess
 
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> GroupCollectionAccess:
         return GroupCollectionAccess(
             name=data["group_name"],
-            access=data["access"],
+            access=GroupAccess[data["access"].upper()],
         )
 
     def format_toml(self) -> str:
-        return "{ group_name = " + self.name + '", access = "' + self.access + '" }'
+        return "{ group_name = " + self.name + '", access = "' + str(self.access).lower() + '" }'
 
 
 class Collection(NamedTuple):
@@ -332,9 +335,9 @@ class BitwardenClient(NamedTuple):
     def get_collection_groups(self, groups: Any) -> Iterable[GroupCollectionAccess]:
         for group in groups:
             if group["readOnly"] == True:
-                access = "readonly"
+                access = GroupAccess["READONLY"]
             else:
-                access = "write"
+                access = GroupAccess["WRITE"]
 
             group_id = group["id"]
             yield GroupCollectionAccess(
