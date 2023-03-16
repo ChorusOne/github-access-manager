@@ -78,12 +78,18 @@ from typing import (
     TypeVar,
 )
 
+class MemberType(Enum):
+    OWNER = 0
+    ADMIN = 1
+    USER = 2
+    MANAGER = 3
+    CUSTOM = 4
 
 class Member(NamedTuple):
     id: str
     name: str
     email: str
-    type: str
+    type: MemberType
     access_all: bool
     # groups: Tuple[str, ...]
 
@@ -99,7 +105,7 @@ class Member(NamedTuple):
             id=data["member_id"],
             name=data["member_name"],
             email=data["email"],
-            type=data["type"],
+            type=MemberType[data["type"].upper()],
             access_all=access_all,
         )
 
@@ -233,7 +239,7 @@ class Collection(NamedTuple):
         result = (
             "[[collection]]\n"
             f"collection_id = {self.id}\n"
-            f'external_id = "{self.external_id}"\n'
+            f"external_id = {self.external_id}\n"
         )
 
         if self.member_access is not None:
@@ -381,19 +387,16 @@ class BitwardenClient(NamedTuple):
                 group_name=name,
             )
 
-    def set_member_type(self, type_id: int) -> str:
-        match type_id:
-            case 0:
-                type = "owner"
-            case 1:
-                type = "admin"
-            case 2:
-                type = "user"
-            case 3:
-                type = "manager"
-            case 4:
-                type = "custom"
-        return type
+    def set_member_type(self, type_id: int) -> MemberType:
+        int_to_member_type: Dict[int, MemberType] = {
+            0: MemberType.OWNER,
+            1: MemberType.ADMIN,
+            2: MemberType.USER,
+            3: MemberType.MANAGER,
+            4: MemberType.CUSTOM,
+        }
+
+        return MemberType(int_to_member_type[type_id])
 
     def get_members(self) -> Iterable[Member]:
         data = self._http_get(f"/public/members")
