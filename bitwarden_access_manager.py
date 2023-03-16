@@ -78,12 +78,14 @@ from typing import (
     TypeVar,
 )
 
+
 class MemberType(Enum):
     OWNER = 0
     ADMIN = 1
     USER = 2
     MANAGER = 3
     CUSTOM = 4
+
 
 class Member(NamedTuple):
     id: str
@@ -313,7 +315,7 @@ class BitwardenClient(NamedTuple):
             )
 
     def get_collection_members(
-        self, groups: Any, org_members: Dict[str, Member]
+        self, groups: List[Dict[str, Any]], org_members: Dict[str, Member]
     ) -> Iterable[MemberCollectionAccess]:
         for group in groups:
             group_id = group["id"]
