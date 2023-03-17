@@ -1,54 +1,81 @@
 #!/usr/bin/env python3
 
+# Copyright 2022 Chorus One
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# A copy of the License has been included in the root of the repository.
+
 """
 Bitwarden Access Manager
 
+Compare the current state of a Bitwarden organization with a desired state
+expressed in a TOML file. Currently this tool only points out the differences,
+it does not automatically reconcile them for you.
+
+USAGE
+
+    ./bitwarden_access_manager.py organization.toml
+
+ENVIRONMENT
+
+Requires BITWARDEN_CLIENT_ID and BITWARDEN_CLIENT_SECRET to be set in the environment.
+Those must contain OAuth2 client credentials for the organization. Only Bitwarden
+members of the organization with OWNER role have access to those credentials.
+
+You can view the credentials at https://vault.bitwarden.com/#/organizations/<organiation_id>/settings/account
+
 CONFIGURATION
+
+* The access_all key for members and groups is optional, default is false.
+* The member_access key for a collection only list members with direct access
+to collection. It omits direct access for members with the role
+owners or admins because they have implicit access to all collections.
 
 [[member]]
 member_id = "2564c11f-fc1b-4ec7-aa0b-afaf00a9e4a4"
 member_name = "yan"
 email = "yan.68@hotmail.fr"
 type = "member"
-groups = ["group1", "group2"]
+groups = ["group1"]
 
 [[member]]
 member_id = "856cba2d-cae1-40e7-96cc-afaf00a8a4cb"
 member_name = "yunkel"
 email = "yunkel68@hotmail.fr"
 type = "owner"
-access_all = true # access_all is optional, default is false
-groups = ["group1"]
+access_all = true
+groups = ["group1", "group2"]
 
 [[group]]
 group_id = "c6a13b93-edc1-4c3b-9fc5-afaf00a8d33f"
 group_name = "group1"
-access_all = false
+access_all = true
 
 [[group]]
 group_id = "39b48ab2-81fd-40eb-87e9-afb0000110f3"
 group_name = "group2"
-access_all = false
 
 [[collection]]
 collection_id = "50351c20-55b4-4ee8-bbe0-afaf00a8f25d"
 external_id = "collection1"
 member_access = [
-  { member_id = "2564c11f-fc1b-4ec7-aa0b-afaf00a9e4a4", member_name = "yan", group = "c6a13b93-edc1-4c3b-9fc5-afaf00a8d33f" },
-  ]
+  { member_name = "yan", access = "write"},,
+]
+
 group_access = [
-  { group_id = "c6a13b93-edc1-4c3b-9fc5-afaf00a8d33f", group_name = "group1", read_only = true },
-  { group_id = "39b48ab2-81fd-40eb-87e9-afb0000110f3", group_name = "group2", read_only = true },
+  { group_name = "group1", access = "readonly"},
+  { group_name = "group2", access = "write" },
 ]
 
 [[collection]]
 collection_id = "8e69ce49-85ae-4e09-a52c-afaf00a90a3f"
 external_id = ""
 member_access = [
-  { member_id = "2564c11f-fc1b-4ec7-aa0b-afaf00a9e4a4", member_name = "yan", group = "c6a13b93-edc1-4c3b-9fc5-afaf00a8d33f" },
+  { member_name = "yan", access = "write" },
 ]
 group_access = [
-  { group_id = "c6a13b93-edc1-4c3b-9fc5-afaf00a8d33f", group_name = "group1", read_only = false },
+  { group_name = "group1", access = "readonly" },
 ]
 """
 
