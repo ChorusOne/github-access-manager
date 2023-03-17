@@ -149,7 +149,7 @@ class Member(NamedTuple):
             f"member_id = {self.id}",
             f"member_name = {self.name}",
             f"email = {self.email}",
-            f"type = {str(self.type)}",
+            f"type = {self.type.name.lower()}",
             f"access_all = {str(self.access_all).lower()}",
         ]
         return "\n".join(lines)
@@ -221,7 +221,7 @@ class MemberCollectionAccess(NamedTuple):
             '{ member_name = "'
             + self.name
             + '", access = "'
-            + str(self.access.name).lower()
+            + self.access.name.lower()
             + '"}'
         )
 
@@ -242,7 +242,7 @@ class GroupCollectionAccess(NamedTuple):
             '{ group_name = "'
             + self.name
             + '", access = "'
-            + str(self.access.name).lower()
+            + self.access.name.lower()
             + '" }'
         )
 
