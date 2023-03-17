@@ -86,9 +86,11 @@ class MemberType(Enum):
     MANAGER = 3
     CUSTOM = 4
 
+
 class GroupAccess(Enum):
     READONLY = 0
     WRITE = 1
+
 
 class Member(NamedTuple):
     id: str
@@ -178,15 +180,23 @@ class Group(NamedTuple):
 
 class MemberCollectionAccess(NamedTuple):
     name: str
+    access: GroupAccess
 
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> MemberCollectionAccess:
         return MemberCollectionAccess(
             name=data["member_name"],
+            access=GroupAccess[data["access"].upper()],
         )
 
     def format_toml(self) -> str:
-        return "{ member_name = " + self.name + '"}'
+        return (
+            '{ member_name = "'
+            + self.name
+            + '", access = "'
+            + str(self.access.name).lower()
+            + '"}'
+        )
 
 
 class GroupCollectionAccess(NamedTuple):
@@ -201,7 +211,13 @@ class GroupCollectionAccess(NamedTuple):
         )
 
     def format_toml(self) -> str:
-        return "{ group_name = " + self.name + '", access = "' + str(self.access).lower() + '" }'
+        return (
+            '{ group_name = "'
+            + self.name
+            + '", access = "'
+            + str(self.access.name).lower()
+            + '" }'
+        )
 
 
 class Collection(NamedTuple):
@@ -317,27 +333,9 @@ class BitwardenClient(NamedTuple):
                 access_all=group["accessAll"],
             )
 
-    def get_collection_members(
-        self, groups: List[Dict[str, Any]], org_members: Dict[str, Member]
-    ) -> Iterable[MemberCollectionAccess]:
-        for group in groups:
-            group_id = group["id"]
-
-            member_ids = json.load(
-                self._http_get(f"/public/groups/{group_id}/member-ids")
-            )
-
-            for member_id in member_ids:
-                yield MemberCollectionAccess(
-                    name=org_members[member_id].name,
-                )
-
     def get_collection_groups(self, groups: Any) -> Iterable[GroupCollectionAccess]:
         for group in groups:
-            if group["readOnly"] == True:
-                access = GroupAccess["READONLY"]
-            else:
-                access = GroupAccess["WRITE"]
+            access = self.check_access(group["readOnly"])
 
             group_id = group["id"]
             yield GroupCollectionAccess(
@@ -345,7 +343,11 @@ class BitwardenClient(NamedTuple):
                 access=access,
             )
 
-    def get_collections(self, org_members: Dict[str, Member]) -> Iterable[Collection]:
+    def get_collections(
+        self,
+        org_members: Dict[str, Member],
+        collections_members: Dict[str, List[MemberCollectionAccess]],
+    ) -> Iterable[Collection]:
         collections = json.load(self._http_get(f"/public/collections"))
 
         for collection in collections["data"]:
@@ -363,16 +365,9 @@ class BitwardenClient(NamedTuple):
 
             if len(group_accesses_data) > 0:
                 group_accesses = group_accesses_data
-                member_accesses_data = tuple(
-                    sorted(
-                        self.get_collection_members(
-                            groups=collection_data["groups"], org_members=org_members
-                        )
-                    )
-                )
 
-                if len(member_accesses_data) > 0:
-                    member_accesses = member_accesses_data
+            if collection_id in collections_members:
+                member_accesses = tuple(sorted(collections_members[collection_id]))
 
             yield Collection(
                 id=collection["id"],
@@ -400,23 +395,51 @@ class BitwardenClient(NamedTuple):
             3: MemberType.MANAGER,
             4: MemberType.CUSTOM,
         }
-
         return MemberType(int_to_member_type[type_id])
 
-    def get_members(self) -> Iterable[Member]:
+    def get_members(
+        self,
+    ) -> tuple[List[Member], Dict[str, List[MemberCollectionAccess]]]:
         data = self._http_get(f"/public/members")
         members = json.load(data)
 
+        members_result: List[Member] = []
+        collection_access: Dict[str, List[MemberCollectionAccess]] = {}
+
         for member in members["data"]:
             type = self.set_member_type(member["type"])
-
-            yield Member(
+            m = Member(
                 id=member["id"],
                 name=member["name"],
                 email=member["email"],
                 type=type,
                 access_all=member["accessAll"],
             )
+            members_result.append(m)
+
+            collections = json.load(self._http_get(f"/public/members/{member['id']}"))[
+                "collections"
+            ]
+            if type != MemberType.OWNER and type != MemberType.ADMIN:
+                for collection in collections:
+                    access = self.check_access(collection["readOnly"])
+
+                    if collection["id"] not in collection_access:
+                        collection_access[collection["id"]] = [
+                            MemberCollectionAccess(name=member["name"], access=access)
+                        ]
+                    else:
+                        collection_access[collection["id"]].append(
+                            MemberCollectionAccess(name=member["name"], access=access)
+                        )
+
+        return members_result, collection_access
+
+    def check_access(self, readonly: bool) -> GroupAccess:
+        if readonly == True:
+            return GroupAccess["READONLY"]
+        else:
+            return GroupAccess["WRITE"]
 
 
 class Configuration(NamedTuple):
@@ -640,8 +663,9 @@ def main() -> None:
     target = Configuration.from_toml_file(target_fname)
     client = BitwardenClient.new(client_id, client_secret)
 
-    current_members = set(client.get_members())
-    members_diff = Diff.new(target=target.member, actual=current_members)
+    current_members, members_access = client.get_members()
+    current_members_set = set(current_members)
+    members_diff = Diff.new(target=target.member, actual=current_members_set)
     members_diff.print_diff(
         f"The following members are specified in {target_fname} but not a member of the Bitwarden organization:",
         f"The following members are not specified in {target_fname} but are a member of the Bitwarden organization:",
@@ -649,7 +673,7 @@ def main() -> None:
     )
 
     org_members: Dict[str, Member] = {member.id: member for member in current_members}
-    current_collections = set(client.get_collections(org_members))
+    current_collections = set(client.get_collections(org_members, members_access))
     collections_diff = Diff.new(target=target.collection, actual=current_collections)
     collections_diff.print_diff(
         f"The following collections are specified in {target_fname} but not a member of the Bitwarden organization:",
