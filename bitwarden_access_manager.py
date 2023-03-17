@@ -146,10 +146,10 @@ class Member(NamedTuple):
     def format_toml(self) -> str:
         lines = [
             "[[member]]",
-            f"member_id = {self.id}",
-            f"member_name = {self.name}",
-            f"email = {self.email}",
-            f"type = {self.type.name.lower()}",
+            f'member_id = "{self.id}"',
+            f'member_name = "{self.name}"',
+            f'email = "{self.email}"',
+            f'type = "{self.type.name.lower()}"',
             f"access_all = {str(self.access_all).lower()}",
         ]
         return "\n".join(lines)
@@ -198,9 +198,9 @@ class Group(NamedTuple):
     def format_toml(self) -> str:
         lines = [
             "[[group]]",
-            f"group_id = {self.id}",
-            f"group_name = {self.name}",
-            f"access_all = {str(self.access_all).lower()}",
+            f'group_id = "{self.id}"',
+            f'group_name = "{self.name}"',
+            f'access_all = "{str(self.access_all).lower()}"',
         ]
         return "\n".join(lines)
 
@@ -286,8 +286,8 @@ class Collection(NamedTuple):
     def format_toml(self) -> str:
         result = (
             "[[collection]]\n"
-            f"collection_id = {self.id}\n"
-            f"external_id = {self.external_id}\n"
+            f'collection_id = "{self.id}"\n'
+            f'external_id = "{self.external_id}"\n'
         )
 
         if self.member_access is not None:
