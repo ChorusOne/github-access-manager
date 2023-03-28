@@ -693,17 +693,14 @@ def main() -> None:
         group for group in current_groups if group.name in target_groups_names
     ]
 
-    member_groups: Dict[str, List[str]] = {}
+    member_groups: Dict[str, List[str]] = defaultdict(lambda: [])
 
     for group in existing_desired_groups:
         group_members = set(client.get_group_members(group.id, group.name))
 
         # Create a Dict mapping member ids to the groups they are a member of.
         for group_member in group_members:
-            if group_member.member_id not in member_groups:
-                member_groups[group_member.member_id] = [group.name]
-            else:
-                member_groups[group_member.member_id].append(group.name)
+            member_groups[group_member.member_id].append(group.name)
 
     current_members, members_access = client.get_members(member_groups)
     current_members_set = set(current_members)
