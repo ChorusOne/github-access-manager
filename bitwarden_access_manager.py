@@ -429,13 +429,8 @@ class BitwardenClient(NamedTuple):
             )
 
     def set_member_type(self, type_id: int) -> MemberType:
-        int_to_member_type: Dict[int, MemberType] = {
-            0: MemberType.OWNER,
-            1: MemberType.ADMIN,
-            2: MemberType.USER,
-            3: MemberType.MANAGER,
-            4: MemberType.CUSTOM,
-        }
+        int_to_member_type: Dict[int, MemberType] = {variant.value: variant for variant in MemberType}
+
         return MemberType(int_to_member_type[type_id])
 
     def get_members(
