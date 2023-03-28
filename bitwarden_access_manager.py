@@ -220,20 +220,20 @@ class Group(NamedTuple):
 
 
 class MemberCollectionAccess(NamedTuple):
-    name: str
+    member_name: str
     access: GroupAccess
 
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> MemberCollectionAccess:
         return MemberCollectionAccess(
-            name=data["member_name"],
+            member_name=data["member_name"],
             access=GroupAccess[data["access"].upper()],
         )
 
     def format_toml(self) -> str:
         return (
             '{ member_name = "'
-            + self.name
+            + self.member_name
             + '", access = "'
             + self.access.name.lower()
             + '"}'
@@ -241,20 +241,20 @@ class MemberCollectionAccess(NamedTuple):
 
 
 class GroupCollectionAccess(NamedTuple):
-    name: str
+    group_name: str
     access: GroupAccess
 
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> GroupCollectionAccess:
         return GroupCollectionAccess(
-            name=data["group_name"],
+            group_name=data["group_name"],
             access=GroupAccess[data["access"].upper()],
         )
 
     def format_toml(self) -> str:
         return (
             '{ group_name = "'
-            + self.name
+            + self.group_name
             + '", access = "'
             + self.access.name.lower()
             + '" }'
@@ -380,7 +380,7 @@ class BitwardenClient(NamedTuple):
 
             group_id = group["id"]
             yield GroupCollectionAccess(
-                name=json.load(self._http_get(f"/public/groups/{group_id}"))["name"],
+                group_name=json.load(self._http_get(f"/public/groups/{group_id}"))["name"],
                 access=access,
             )
 
@@ -417,15 +417,15 @@ class BitwardenClient(NamedTuple):
                 group_access=group_accesses,
             )
 
-    def get_group_members(self, id: str, name: str) -> Iterable[GroupMember]:
-        members = json.load(self._http_get(f"/public/groups/{id}/member-ids"))
+    def get_group_members(self, group_id: str, group_name: str) -> Iterable[GroupMember]:
+        members = json.load(self._http_get(f"/public/groups/{group_id}/member-ids"))
 
         for member in members:
             member = json.load(self._http_get(f"/public/members/{member}"))
             yield GroupMember(
                 member_id=member["id"],
                 member_name=member["name"],
-                group_name=name,
+                group_name=group_name,
             )
 
     def set_member_type(self, type_id: int) -> MemberType:
@@ -471,11 +471,11 @@ class BitwardenClient(NamedTuple):
 
                     if collection["id"] not in collection_access:
                         collection_access[collection["id"]] = [
-                            MemberCollectionAccess(name=member["name"], access=access)
+                            MemberCollectionAccess(member_name=member["name"], access=access)
                         ]
                     else:
                         collection_access[collection["id"]].append(
-                            MemberCollectionAccess(name=member["name"], access=access)
+                            MemberCollectionAccess(member_name=member["name"], access=access)
                         )
 
         return members_result, collection_access
