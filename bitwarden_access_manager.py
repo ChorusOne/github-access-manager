@@ -80,6 +80,7 @@ group_access = [
 """
 
 from __future__ import annotations
+from collections import defaultdict
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from enum import Enum
@@ -96,7 +97,6 @@ from typing import (
     Dict,
     List,
     Generic,
-    Optional,
     Tuple,
     NamedTuple,
     Set,
@@ -380,7 +380,9 @@ class BitwardenClient(NamedTuple):
 
             group_id = group["id"]
             yield GroupCollectionAccess(
-                group_name=json.load(self._http_get(f"/public/groups/{group_id}"))["name"],
+                group_name=json.load(self._http_get(f"/public/groups/{group_id}"))[
+                    "name"
+                ],
                 access=access,
             )
 
@@ -417,7 +419,9 @@ class BitwardenClient(NamedTuple):
                 group_access=group_accesses,
             )
 
-    def get_group_members(self, group_id: str, group_name: str) -> Iterable[GroupMember]:
+    def get_group_members(
+        self, group_id: str, group_name: str
+    ) -> Iterable[GroupMember]:
         members = json.load(self._http_get(f"/public/groups/{group_id}/member-ids"))
 
         for member in members:
@@ -429,7 +433,9 @@ class BitwardenClient(NamedTuple):
             )
 
     def set_member_type(self, type_id: int) -> MemberType:
-        int_to_member_type: Dict[int, MemberType] = {variant.value: variant for variant in MemberType}
+        int_to_member_type: Dict[int, MemberType] = {
+            variant.value: variant for variant in MemberType
+        }
 
         return MemberType(int_to_member_type[type_id])
 
@@ -440,7 +446,7 @@ class BitwardenClient(NamedTuple):
         members = json.load(data)
 
         members_result: List[Member] = []
-        collection_access: Dict[str, List[MemberCollectionAccess]] = {}
+        collection_access: Dict[str, List[MemberCollectionAccess]] = defaultdict(lambda: [])
         groups: Tuple[str, ...] = tuple()
 
         for member in members["data"]:
@@ -464,14 +470,9 @@ class BitwardenClient(NamedTuple):
                 for collection in collections:
                     access = self.map_access(readonly=collection["readOnly"])
 
-                    if collection["id"] not in collection_access:
-                        collection_access[collection["id"]] = [
-                            MemberCollectionAccess(member_name=member["name"], access=access)
-                        ]
-                    else:
-                        collection_access[collection["id"]].append(
-                            MemberCollectionAccess(member_name=member["name"], access=access)
-                        )
+                    collection_access[collection["id"]].append(
+                        MemberCollectionAccess(member_name=member["name"], access=access)
+                    )
 
         return members_result, collection_access
 
