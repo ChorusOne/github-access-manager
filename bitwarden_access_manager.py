@@ -60,7 +60,7 @@ group_name = "group2"
 collection_id = "50351c20-55b4-4ee8-bbe0-afaf00a8f25d"
 external_id = "collection1"
 member_access = [
-  { member_name = "yan", access = "write"},,
+  { member_name = "yan", access = "write"},
 ]
 
 group_access = [
@@ -125,7 +125,7 @@ class Member(NamedTuple):
     email: str
     type: MemberType
     access_all: bool
-    # groups: Tuple[str, ...]
+    groups: Tuple[str, ...]
 
     def get_id(self) -> str:
         return self.id
@@ -133,30 +133,44 @@ class Member(NamedTuple):
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> Member:
         access_all: bool = False
+        groups: Tuple[str, ...] = tuple()
+
         if "access_all" in data:
             access_all = data["access_all"]
+        if "groups" in data:
+            groups = data["groups"]
+            groups = tuple(sorted(data["groups"]))
         return Member(
             id=data["member_id"],
             name=data["member_name"],
             email=data["email"],
             type=MemberType[data["type"].upper()],
             access_all=access_all,
+            groups=groups,
         )
 
     def format_toml(self) -> str:
-        lines = [
-            "[[member]]",
-            f'member_id = "{self.id}"',
-            f'member_name = "{self.name}"',
-            f'email = "{self.email}"',
-            f'type = "{self.type.name.lower()}"',
-            f"access_all = {str(self.access_all).lower()}",
-        ]
-        return "\n".join(lines)
+        result = (
+            "[[member]]\n"
+            f'member_id = "{self.id}"\n'
+            f'member_name = "{self.name}"\n'
+            f'email = "{self.email}"\n'
+            f'type = "{self.type.name.lower()}\n"'
+            f"access_all = {str(self.access_all).lower()}\n"
+        )
+
+        groups = self.groups or ()
+        if len(groups) > 0:
+            groups_str = ", ".join(f'"{g}"' for g in sorted(groups))
+            result = result + "groups = [ " + groups_str + " ]"
+        else:
+            result = result + "groups = []"
+
+        return result
 
 
 class GroupMember(NamedTuple):
-    member_id: int
+    member_id: str
     member_name: str
     group_name: str
 
@@ -425,22 +439,26 @@ class BitwardenClient(NamedTuple):
         return MemberType(int_to_member_type[type_id])
 
     def get_members(
-        self,
+        self, member_groups: Dict[str, List[str]]
     ) -> tuple[List[Member], Dict[str, List[MemberCollectionAccess]]]:
         data = self._http_get(f"/public/members")
         members = json.load(data)
 
         members_result: List[Member] = []
         collection_access: Dict[str, List[MemberCollectionAccess]] = {}
+        groups: Tuple[str, ...] = tuple()
 
         for member in members["data"]:
             type = self.set_member_type(member["type"])
+            if member["id"] in member_groups:
+                groups = tuple(sorted(member_groups[member["id"]]))
             m = Member(
                 id=member["id"],
                 name=member["name"],
                 email=member["email"],
                 type=type,
                 access_all=member["accessAll"],
+                groups=groups,
             )
             members_result.append(m)
 
@@ -634,36 +652,6 @@ class Diff(Generic[T]):
             print()
 
 
-def print_group_members_diff(
-    *,
-    group_name: str,
-    target_fname: str,
-    target_members: Set[GroupMember],
-    actual_members: Set[GroupMember],
-) -> None:
-    members_diff = Diff.new(
-        target=target_members,
-        actual=actual_members,
-    )
-    if len(members_diff.to_remove) > 0:
-        print(
-            f"The following members of group '{group_name}' are not specified "
-            f"in {target_fname}, but are present on Bitwarden:\n"
-        )
-        for member in sorted(members_diff.to_remove):
-            print(f"  {member.member_name}")
-        print()
-
-    if len(members_diff.to_add) > 0:
-        print(
-            f"The following members of group '{group_name}' are specified "
-            f"in {target_fname}, but are not present on Bitwarden:\n"
-        )
-        for member in sorted(members_diff.to_add):
-            print(f"  {member.member_name}")
-        print()
-
-
 def main() -> None:
     if "--help" in sys.argv:
         print(__doc__)
@@ -690,7 +678,34 @@ def main() -> None:
     target = Configuration.from_toml_file(target_fname)
     client = BitwardenClient.new(client_id, client_secret)
 
-    current_members, members_access = client.get_members()
+    current_groups = set(client.get_groups())
+    groups_diff = Diff.new(target=target.group, actual=current_groups)
+    groups_diff.print_diff(
+        f"The following groups specified in {target_fname} are not present on Bitwarden:",
+        f"The following groups are not specified in {target_fname} but are present on Bitwarden:",
+        f"The following groups on Bitwarden need to be changed to match {target_fname}:",
+    )
+
+    # For all the groups which we want to exist, and which do actually exist,
+    # compare their members.
+    target_groups_names = {group.name for group in target.group}
+    existing_desired_groups = [
+        group for group in current_groups if group.name in target_groups_names
+    ]
+
+    member_groups: Dict[str, List[str]] = {}
+
+    for group in existing_desired_groups:
+        group_members = set(client.get_group_members(group.id, group.name))
+
+        # Create a Dict mapping member ids to the groups they are a member of.
+        for group_member in group_members:
+            if group_member.member_id not in member_groups:
+                member_groups[group_member.member_id] = [group.name]
+            else:
+                member_groups[group_member.member_id].append(group.name)
+
+    current_members, members_access = client.get_members(member_groups)
     current_members_set = set(current_members)
     members_diff = Diff.new(target=target.member, actual=current_members_set)
     members_diff.print_diff(
@@ -707,30 +722,6 @@ def main() -> None:
         f"The following collections are not specified in {target_fname} but are a member of the Bitwarden organization:",
         f"The following collections on Bitwarden need to be changed to match {target_fname}:",
     )
-
-    current_groups = set(client.get_groups())
-    groups_diff = Diff.new(target=target.group, actual=current_groups)
-    groups_diff.print_diff(
-        f"The following groups specified in {target_fname} are not present on Bitwarden:",
-        f"The following groups are not specified in {target_fname} but are present on Bitwarden:",
-        f"The following groups on Bitwarden need to be changed to match {target_fname}:",
-    )
-
-    # For all the groups which we want to exist, and which do actually exist,
-    # compare their members.
-    target_groups_names = {group.name for group in target.group}
-    existing_desired_groups = [
-        group for group in current_groups if group.name in target_groups_names
-    ]
-    for group in existing_desired_groups:
-        print_group_members_diff(
-            group_name=group.name,
-            target_fname=target_fname,
-            target_members={
-                m for m in target.group_memberships if m.group_name == group.name
-            },
-            actual_members=set(client.get_group_members(group.id, group.name)),
-        )
 
 
 if __name__ == "__main__":
