@@ -264,15 +264,15 @@ class GroupCollectionAccess(NamedTuple):
 class Collection(NamedTuple):
     id: str
     external_id: str
-    group_access: Optional[Tuple[GroupCollectionAccess, ...]]
-    member_access: Optional[Tuple[MemberCollectionAccess, ...]]
+    group_access: Tuple[GroupCollectionAccess, ...]
+    member_access: Tuple[MemberCollectionAccess, ...]
 
     def get_id(self) -> str:
         return self.id
 
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> Collection:
-        group_access: Optional[Tuple[GroupCollectionAccess, ...]] = None
+        group_access: Tuple[GroupCollectionAccess, ...] = tuple()
         if "group_access" in data:
             group_access = tuple(
                 sorted(
@@ -281,7 +281,7 @@ class Collection(NamedTuple):
                 )
             )
 
-        member_access: Optional[Tuple[MemberCollectionAccess, ...]] = None
+        member_access: Tuple[MemberCollectionAccess, ...] = tuple()
         if "member_access" in data:
             member_access = tuple(
                 sorted(
@@ -392,8 +392,8 @@ class BitwardenClient(NamedTuple):
         collections = json.load(self._http_get(f"/public/collections"))
 
         for collection in collections["data"]:
-            group_accesses: Optional[Tuple[GroupCollectionAccess, ...]] = None
-            member_accesses: Optional[Tuple[MemberCollectionAccess, ...]] = None
+            group_accesses: Tuple[GroupCollectionAccess, ...] = tuple()
+            member_accesses: Tuple[MemberCollectionAccess, ...] = tuple()
             collection_id = collection["id"]
 
             collection_data = json.load(
