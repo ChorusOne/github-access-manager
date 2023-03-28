@@ -376,7 +376,7 @@ class BitwardenClient(NamedTuple):
 
     def get_collection_groups(self, groups: Any) -> Iterable[GroupCollectionAccess]:
         for group in groups:
-            access = self.check_access(group["readOnly"])
+            access = self.map_access(readonly=group["readOnly"])
 
             group_id = group["id"]
             yield GroupCollectionAccess(
@@ -467,7 +467,7 @@ class BitwardenClient(NamedTuple):
             ]
             if type != MemberType.OWNER and type != MemberType.ADMIN:
                 for collection in collections:
-                    access = self.check_access(collection["readOnly"])
+                    access = self.map_access(readonly=collection["readOnly"])
 
                     if collection["id"] not in collection_access:
                         collection_access[collection["id"]] = [
@@ -480,7 +480,7 @@ class BitwardenClient(NamedTuple):
 
         return members_result, collection_access
 
-    def check_access(self, readonly: bool) -> GroupAccess:
+    def map_access(self, *, readonly: bool) -> GroupAccess:
         if readonly == True:
             return GroupAccess["READONLY"]
         else:
