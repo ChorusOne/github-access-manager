@@ -374,18 +374,6 @@ class BitwardenClient(NamedTuple):
                 access_all=group["accessAll"],
             )
 
-    def get_collection_groups(self, groups: Any) -> Iterable[GroupCollectionAccess]:
-        for group in groups:
-            access = self.map_access(readonly=group["readOnly"])
-
-            group_id = group["id"]
-            yield GroupCollectionAccess(
-                group_name=json.load(self._http_get(f"/public/groups/{group_id}"))[
-                    "name"
-                ],
-                access=access,
-            )
-
     def get_collections(
         self,
         org_members: Dict[str, Member],
@@ -402,9 +390,21 @@ class BitwardenClient(NamedTuple):
                 self._http_get(f"/public/collections/{collection_id}")
             )
 
-            group_accesses_data = tuple(
-                sorted(self.get_collection_groups(collection_data["groups"]))
-            )
+            group_collection_accesses: List[GroupCollectionAccess] = []
+
+            for group in collection_data["groups"]:
+                access = self.map_access(readonly=group["readOnly"])
+                group_id = group["id"]
+                group_collection_accesses.append(
+                    GroupCollectionAccess(
+                        group_name=json.load(
+                            self._http_get(f"/public/groups/{group_id}")
+                        )["name"],
+                        access=access,
+                    )
+                )
+
+            group_accesses_data = tuple(sorted(group_collection_accesses))
 
             if len(group_accesses_data) > 0:
                 group_accesses = group_accesses_data
@@ -446,7 +446,9 @@ class BitwardenClient(NamedTuple):
         members = json.load(data)
 
         members_result: List[Member] = []
-        collection_access: Dict[str, List[MemberCollectionAccess]] = defaultdict(lambda: [])
+        collection_access: Dict[str, List[MemberCollectionAccess]] = defaultdict(
+            lambda: []
+        )
         groups: Tuple[str, ...] = tuple()
 
         for member in members["data"]:
@@ -471,7 +473,9 @@ class BitwardenClient(NamedTuple):
                     access = self.map_access(readonly=collection["readOnly"])
 
                     collection_access[collection["id"]].append(
-                        MemberCollectionAccess(member_name=member["name"], access=access)
+                        MemberCollectionAccess(
+                            member_name=member["name"], access=access
+                        )
                     )
 
         return members_result, collection_access
