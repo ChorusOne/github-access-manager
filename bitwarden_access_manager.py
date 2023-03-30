@@ -23,7 +23,7 @@ Requires BITWARDEN_CLIENT_ID and BITWARDEN_CLIENT_SECRET to be set in the enviro
 Those must contain OAuth2 client credentials for the organization. Only Bitwarden
 members of the organization with OWNER role have access to those credentials.
 
-You can view the credentials at https://vault.bitwarden.com/#/organizations/<organiation_id>/settings/account
+You can view the credentials at https://vault.bitwarden.com/#/organizations/<organization_id>/settings/account
 
 CONFIGURATION
 
@@ -159,12 +159,7 @@ class Member(NamedTuple):
             f"access_all = {str(self.access_all).lower()}\n"
         )
 
-        groups = self.groups or ()
-        if len(groups) > 0:
-            groups_str = ", ".join(f'"{g}"' for g in sorted(groups))
-            result = result + "groups = [ " + groups_str + " ]"
-        else:
-            result = result + "groups = []"
+        result = result + "groups = [" + ", ".join(json.dumps(g) for g in sorted(self.groups)) + "]"
 
         return result
 
@@ -304,33 +299,32 @@ class Collection(NamedTuple):
             f'external_id = "{self.external_id}"\n'
         )
 
-        if self.member_access is not None:
-            member_access_lines = [
-                "  " + a.format_toml() for a in sorted(self.member_access)
-            ]
-            if len(member_access_lines) > 0:
-                result = (
-                    result
-                    + "member_access = [\n"
-                    + ",\n".join(member_access_lines)
-                    + ",\n]\n"
-                )
-            else:
-                result = result + "member_access = []\n"
+        member_access_lines = [
+            "  " + a.format_toml() for a in sorted(self.member_access)
+        ]
+        if len(member_access_lines) > 0:
+            result = (
+                result
+                + "member_access = [\n"
+                + ",\n".join(member_access_lines)
+                + ",\n]\n"
+            )
+        else:
+            result = result + "member_access = []\n"
 
-        if self.group_access is not None:
-            group_access_lines = [
-                "  " + a.format_toml() for a in sorted(self.group_access)
-            ]
-            if len(group_access_lines) > 0:
-                result = (
-                    result
-                    + "group_access = [\n"
-                    + ",\n".join(group_access_lines)
-                    + ",\n]"
-                )
-            else:
-                result = result + "group_access = []"
+        group_access_lines = [
+            "  " + a.format_toml() for a in sorted(self.group_access)
+        ]
+        if len(group_access_lines) > 0:
+            result = (
+                result
+                + "group_access = [\n"
+                + ",\n".join(group_access_lines)
+                + ",\n]"
+            )
+        else:
+            result = result + "group_access = []"
+
         return result
 
 
@@ -404,10 +398,7 @@ class BitwardenClient(NamedTuple):
                     )
                 )
 
-            group_accesses_data = tuple(sorted(group_collection_accesses))
-
-            if len(group_accesses_data) > 0:
-                group_accesses = group_accesses_data
+            group_accesses = tuple(sorted(group_collection_accesses))
 
             if collection_id in collections_members:
                 member_accesses = tuple(sorted(collections_members[collection_id]))
@@ -441,7 +432,7 @@ class BitwardenClient(NamedTuple):
 
     def get_members(
         self, member_groups: Dict[str, List[str]]
-    ) -> tuple[List[Member], Dict[str, List[MemberCollectionAccess]]]:
+    ) -> Tuple[List[Member], Dict[str, List[MemberCollectionAccess]]]:
         data = self._http_get(f"/public/members")
         members = json.load(data)
 
@@ -453,8 +444,7 @@ class BitwardenClient(NamedTuple):
 
         for member in members["data"]:
             type = self.set_member_type(member["type"])
-            if member["id"] in member_groups:
-                groups = tuple(sorted(member_groups[member["id"]]))
+            groups = tuple(sorted(member_groups[member["id"]]))
             m = Member(
                 id=member["id"],
                 name=member["name"],
@@ -489,15 +479,15 @@ class BitwardenClient(NamedTuple):
 
 class Configuration(NamedTuple):
     collection: Set[Collection]
-    member: Set[Member]
-    group: Set[Group]
+    members: Set[Member]
+    groups: Set[Group]
     group_memberships: Set[GroupMember]
 
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> Configuration:
         collection = {Collection.from_toml_dict(c) for c in data["collection"]}
-        member = {Member.from_toml_dict(m) for m in data["member"]}
-        group = {Group.from_toml_dict(m) for m in data["group"]}
+        members = {Member.from_toml_dict(m) for m in data["member"]}
+        groups = {Group.from_toml_dict(m) for m in data["group"]}
         group_memberships = {
             GroupMember(
                 member_id=member["member_id"],
@@ -509,8 +499,8 @@ class Configuration(NamedTuple):
         }
         return Configuration(
             collection=collection,
-            member=member,
-            group=group,
+            members=members,
+            groups=groups,
             group_memberships=group_memberships,
         )
 
@@ -679,7 +669,7 @@ def main() -> None:
     client = BitwardenClient.new(client_id, client_secret)
 
     current_groups = set(client.get_groups())
-    groups_diff = Diff.new(target=target.group, actual=current_groups)
+    groups_diff = Diff.new(target=target.groups, actual=current_groups)
     groups_diff.print_diff(
         f"The following groups specified in {target_fname} are not present on Bitwarden:",
         f"The following groups are not specified in {target_fname} but are present on Bitwarden:",
@@ -688,7 +678,7 @@ def main() -> None:
 
     # For all the groups which we want to exist, and which do actually exist,
     # compare their members.
-    target_groups_names = {group.name for group in target.group}
+    target_groups_names = {group.name for group in target.groups}
     existing_desired_groups = [
         group for group in current_groups if group.name in target_groups_names
     ]
@@ -704,7 +694,7 @@ def main() -> None:
 
     current_members, members_access = client.get_members(member_groups)
     current_members_set = set(current_members)
-    members_diff = Diff.new(target=target.member, actual=current_members_set)
+    members_diff = Diff.new(target=target.members, actual=current_members_set)
     members_diff.print_diff(
         f"The following members are specified in {target_fname} but not a member of the Bitwarden organization:",
         f"The following members are not specified in {target_fname} but are a member of the Bitwarden organization:",
