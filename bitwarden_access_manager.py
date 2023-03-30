@@ -405,8 +405,10 @@ class BitwardenClient(NamedTuple):
 
             group_accesses = tuple(sorted(group_collection_accesses))
 
-            if collection_id in collections_members:
-                member_accesses = tuple(sorted(collections_members[collection_id]))
+            member_accesses = tuple(sorted(
+                collections_members.get(collection_id, []),
+                key=lambda ma: ma.member_name,
+            ))
 
             yield Collection(
                 id=collection["id"],
