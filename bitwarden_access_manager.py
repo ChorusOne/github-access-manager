@@ -172,7 +172,9 @@ class Member(NamedTuple):
         if self.access_all:
             lines.append("access_all = true\n")
 
-        lines.append("groups = [" + ", ".join(json.dumps(g) for g in sorted(self.groups)) + "]\n")
+        lines.append(
+            "groups = [" + ", ".join(json.dumps(g) for g in sorted(self.groups)) + "]\n"
+        )
 
         return "".join(lines)
 
@@ -221,7 +223,7 @@ class Group(NamedTuple):
             "[[group]]",
             f'group_id = "{self.id}"',
             f'group_name = "{self.name}"',
-            f'access_all = {str(self.access_all).lower()}',
+            f"access_all = {str(self.access_all).lower()}",
         ]
         return "\n".join(lines)
 
@@ -240,7 +242,7 @@ class MemberCollectionAccess(NamedTuple):
 
     def format_toml(self) -> str:
         return (
-            f'{{ email = {json.dumps(self.email)}, '
+            f"{{ email = {json.dumps(self.email)}, "
             f'access = "{self.access.name.lower()}" }}'
         )
 
@@ -309,29 +311,31 @@ class Collection(NamedTuple):
         ]
 
         if self.external_id is not None:
-            lines.append(f'external_id = {json.dumps(self.external_id)}\n')
+            lines.append(f"external_id = {json.dumps(self.external_id)}\n")
 
         member_access_lines = [
             "  " + a.format_toml() for a in sorted(self.member_access)
         ]
         if len(member_access_lines) > 0:
-            lines.extend([
-                "member_access = [\n",
-                ",\n".join(member_access_lines),
-                ",\n]\n",
-            ])
+            lines.extend(
+                [
+                    "member_access = [\n",
+                    ",\n".join(member_access_lines),
+                    ",\n]\n",
+                ]
+            )
         else:
             lines.append("member_access = []\n")
 
-        group_access_lines = [
-            "  " + a.format_toml() for a in sorted(self.group_access)
-        ]
+        group_access_lines = ["  " + a.format_toml() for a in sorted(self.group_access)]
         if len(group_access_lines) > 0:
-            lines.extend([
-                "group_access = [\n",
-                ",\n".join(group_access_lines),
-                ",\n]",
-            ])
+            lines.extend(
+                [
+                    "group_access = [\n",
+                    ",\n".join(group_access_lines),
+                    ",\n]",
+                ]
+            )
         else:
             lines.append("group_access = []")
 
@@ -362,12 +366,14 @@ class BitwardenClient(NamedTuple):
             headers={
                 "Content-Type": "application/x-www-form-urlencoded",
             },
-            body=urlencode({
-                "grant_type": "client_credentials",
-                "scope": "api.organization",
-                "client_id": client_id,
-                "client_secret": client_secret,
-            }),
+            body=urlencode(
+                {
+                    "grant_type": "client_credentials",
+                    "scope": "api.organization",
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                }
+            ),
         )
         auth_response: Dict[str, Any] = json.load(connection.getresponse())
         bearer_token = auth_response["access_token"]
@@ -402,7 +408,9 @@ class BitwardenClient(NamedTuple):
         collections = json.load(self._http_get(f"/public/collections"))
 
         for i, collection in enumerate(collections["data"]):
-            print_status_stderr(f"[{i+1}/{len(collections['data'])}] Getting collection ...")
+            print_status_stderr(
+                f"[{i+1}/{len(collections['data'])}] Getting collection ..."
+            )
             group_accesses: Tuple[GroupCollectionAccess, ...] = tuple()
             member_accesses: Tuple[MemberCollectionAccess, ...] = tuple()
             collection_id = collection["id"]
@@ -427,10 +435,12 @@ class BitwardenClient(NamedTuple):
 
             group_accesses = tuple(sorted(group_collection_accesses))
 
-            member_accesses = tuple(sorted(
-                collections_members.get(collection_id, []),
-                key=lambda ma: ma.email,
-            ))
+            member_accesses = tuple(
+                sorted(
+                    collections_members.get(collection_id, []),
+                    key=lambda ma: ma.email,
+                )
+            )
 
             yield Collection(
                 id=collection["id"],
@@ -473,7 +483,9 @@ class BitwardenClient(NamedTuple):
         groups: Tuple[str, ...] = tuple()
 
         for i, member in enumerate(members["data"]):
-            print_status_stderr(f"[{i+1}/{len(members['data'])}] Getting member {member['email']} ...")
+            print_status_stderr(
+                f"[{i+1}/{len(members['data'])}] Getting member {member['email']} ..."
+            )
             type = self.set_member_type(member["type"])
             groups = tuple(sorted(member_groups[member["id"]]))
             m = Member(
@@ -719,7 +731,9 @@ def main() -> None:
     member_groups: Dict[str, List[str]] = defaultdict(lambda: [])
 
     for i, group in enumerate(existing_desired_groups):
-        print_status_stderr(f"[{i+1}/{len(existing_desired_groups)}] Getting group {group.name} ...")
+        print_status_stderr(
+            f"[{i+1}/{len(existing_desired_groups)}] Getting group {group.name} ..."
+        )
         group_members = set(client.get_group_members(group.id, group.name))
 
         # Create a Dict mapping member ids to the groups they are a member of.
