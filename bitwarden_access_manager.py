@@ -85,10 +85,10 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from enum import Enum
 from http.client import HTTPSConnection, HTTPResponse
+from urllib.parse import urlencode
 
 import json
 import os
-import requests
 import sys
 import tomllib
 
@@ -334,17 +334,22 @@ class BitwardenClient(NamedTuple):
 
     @staticmethod
     def new(client_id: str, client_secret: str) -> BitwardenClient:
-        response = requests.post(
-            "https://identity.bitwarden.com/connect/token",
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            data={
+        connection = HTTPSConnection("identity.bitwarden.com")
+        connection.request(
+            method="POST",
+            url="/connect/token",
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body=urlencode({
                 "grant_type": "client_credentials",
                 "scope": "api.organization",
-                "Accept": "application/json",
-            },
-            auth=(client_id, client_secret),
+                "client_id": client_id,
+                "client_secret": client_secret,
+            }),
         )
-        bearer_token = response.json()["access_token"]
+        auth_response: Dict[str, Any] = json.load(connection.getresponse())
+        bearer_token = auth_response["access_token"]
         return BitwardenClient(HTTPSConnection("api.bitwarden.com"), bearer_token)
 
     def _http_get(self, url: str) -> HTTPResponse:
