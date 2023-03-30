@@ -176,7 +176,6 @@ class Member(NamedTuple):
 
 class GroupMember(NamedTuple):
     member_id: str
-    member_name: str
     group_name: str
 
     def get_id(self) -> str:
@@ -301,39 +300,37 @@ class Collection(NamedTuple):
         )
 
     def format_toml(self) -> str:
-        result = (
-            "[[collection]]\n"
-            f'collection_id = "{self.id}"\n'
-            f'external_id = "{self.external_id}"\n'
-        )
+        lines = [
+            "[[collection]]\n",
+            f'collection_id = "{self.id}"\n',
+            f'external_id = "{self.external_id}"\n',
+        ]
 
         member_access_lines = [
             "  " + a.format_toml() for a in sorted(self.member_access)
         ]
         if len(member_access_lines) > 0:
-            result = (
-                result
-                + "member_access = [\n"
-                + ",\n".join(member_access_lines)
-                + ",\n]\n"
-            )
+            lines.extend([
+                "member_access = [\n",
+                ",\n".join(member_access_lines),
+                ",\n]\n",
+            ])
         else:
-            result = result + "member_access = []\n"
+            lines.append("member_access = []\n")
 
         group_access_lines = [
             "  " + a.format_toml() for a in sorted(self.group_access)
         ]
         if len(group_access_lines) > 0:
-            result = (
-                result
-                + "group_access = [\n"
-                + ",\n".join(group_access_lines)
-                + ",\n]"
-            )
+            lines.extend([
+                "group_access = [\n",
+                ",\n".join(group_access_lines),
+                ",\n]",
+            ])
         else:
-            result = result + "group_access = []"
+            lines.append("group_access = []")
 
-        return result
+        return "".join(lines)
 
 
 def print_status_stderr(status: str) -> None:
@@ -445,7 +442,6 @@ class BitwardenClient(NamedTuple):
             member = json.load(self._http_get(f"/public/members/{member}"))
             yield GroupMember(
                 member_id=member["id"],
-                member_name=member["name"],
                 group_name=group_name,
             )
 
@@ -521,7 +517,6 @@ class Configuration(NamedTuple):
         group_memberships = {
             GroupMember(
                 member_id=member["member_id"],
-                member_name=member["member_name"],
                 group_name=group,
             )
             for member in data["member"]
