@@ -328,6 +328,17 @@ class Collection(NamedTuple):
         return result
 
 
+def print_status_stderr(status: str) -> None:
+    """
+    On stderr, clear the current line with an ANSI escape code, jump back to
+    the start of the line, and print the status, without a newline. This means
+    that subsequent updates will overwrite each other (if nothing gets printed
+    to stdout in the meantime).
+    """
+    clear_line = "\x1b[2K\r"
+    print(f"{clear_line}{status}", end="", file=sys.stderr)
+
+
 class BitwardenClient(NamedTuple):
     connection: HTTPSConnection
     bearer_token: str
@@ -449,7 +460,8 @@ class BitwardenClient(NamedTuple):
         )
         groups: Tuple[str, ...] = tuple()
 
-        for member in members["data"]:
+        for i, member in enumerate(members["data"]):
+            print_status_stderr(f"[{i+1}/{len(members['data'])}] Getting member {member['name']} ...")
             type = self.set_member_type(member["type"])
             groups = tuple(sorted(member_groups[member["id"]]))
             m = Member(
@@ -474,6 +486,9 @@ class BitwardenClient(NamedTuple):
                             member_name=member["name"], access=access
                         )
                     )
+
+        # Clear the member fetching status updates.
+        print_status_stderr("")
 
         return members_result, collection_access
 
@@ -692,12 +707,15 @@ def main() -> None:
 
     member_groups: Dict[str, List[str]] = defaultdict(lambda: [])
 
-    for group in existing_desired_groups:
+    for i, group in enumerate(existing_desired_groups):
+        print_status_stderr(f"[{i+1}/{len(existing_desired_groups)}] Getting group {group.name} ...")
         group_members = set(client.get_group_members(group.id, group.name))
 
         # Create a Dict mapping member ids to the groups they are a member of.
         for group_member in group_members:
             member_groups[group_member.member_id].append(group.name)
+
+    print_status_stderr("")
 
     current_members, members_access = client.get_members(member_groups)
     current_members_set = set(current_members)
