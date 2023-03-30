@@ -209,7 +209,7 @@ class Group(NamedTuple):
             "[[group]]",
             f'group_id = "{self.id}"',
             f'group_name = "{self.name}"',
-            f'access_all = "{str(self.access_all).lower()}"',
+            f'access_all = {str(self.access_all).lower()}',
         ]
         return "\n".join(lines)
 
