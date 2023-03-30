@@ -95,13 +95,14 @@ import tomllib
 from typing import (
     Any,
     Dict,
-    List,
     Generic,
-    Tuple,
-    NamedTuple,
-    Set,
     Iterable,
+    List,
+    NamedTuple,
+    Optional,
     Protocol,
+    Set,
+    Tuple,
     TypeVar,
 )
 
@@ -121,7 +122,7 @@ class GroupAccess(Enum):
 
 class Member(NamedTuple):
     id: str
-    name: str
+    name: Optional[str]
     email: str
     type: MemberType
     access_all: bool
@@ -137,12 +138,14 @@ class Member(NamedTuple):
 
         if "access_all" in data:
             access_all = data["access_all"]
+
         if "groups" in data:
             groups = data["groups"]
             groups = tuple(sorted(data["groups"]))
+
         return Member(
             id=data["member_id"],
-            name=data["member_name"],
+            name=data.get("member_name"),
             email=data["email"],
             type=MemberType[data["type"].upper()],
             access_all=access_all,
@@ -150,18 +153,25 @@ class Member(NamedTuple):
         )
 
     def format_toml(self) -> str:
-        result = (
-            "[[member]]\n"
-            f'member_id = "{self.id}"\n'
-            f'member_name = "{self.name}"\n'
-            f'email = "{self.email}"\n'
-            f'type = "{self.type.name.lower()}\n"'
-            f"access_all = {str(self.access_all).lower()}\n"
-        )
+        lines = [
+            "[[member]]\n",
+            f'member_id = "{self.id}"\n',
+        ]
 
-        result = result + "groups = [" + ", ".join(json.dumps(g) for g in sorted(self.groups)) + "]"
+        if self.name is not None:
+            lines.append(f'member_name = "{self.name}"\n')
 
-        return result
+        lines += [
+            f'email = "{self.email}"\n',
+            f'type = "{self.type.name.lower()}"\n',
+        ]
+
+        if self.access_all:
+            lines.append("access_all = true\n")
+
+        lines.append("groups = [" + ", ".join(json.dumps(g) for g in sorted(self.groups)) + "]\n")
+
+        return "".join(lines)
 
 
 class GroupMember(NamedTuple):
@@ -461,7 +471,7 @@ class BitwardenClient(NamedTuple):
         groups: Tuple[str, ...] = tuple()
 
         for i, member in enumerate(members["data"]):
-            print_status_stderr(f"[{i+1}/{len(members['data'])}] Getting member {member['name']} ...")
+            print_status_stderr(f"[{i+1}/{len(members['data'])}] Getting member {member['email']} ...")
             type = self.set_member_type(member["type"])
             groups = tuple(sorted(member_groups[member["id"]]))
             m = Member(
