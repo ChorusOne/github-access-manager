@@ -29,8 +29,11 @@ CONFIGURATION
 
 * The access_all key for members and groups is optional, default is false.
 * The member_access key for a collection only list members with direct access
-to collection. It omits direct access for members with the role
-owners or admins because they have implicit access to all collections.
+  to the collection. It omits direct access for members with the owner or admin
+  role, because they have implicit access to all collections.
+* For collections, external_id is optional, but as the name of the group is
+  encrypted, this is the only way for this script to identify collections by a
+  meaningful name.
 
 [[member]]
 member_id = "2564c11f-fc1b-4ec7-aa0b-afaf00a9e4a4"
@@ -265,7 +268,7 @@ class GroupCollectionAccess(NamedTuple):
 
 class Collection(NamedTuple):
     id: str
-    external_id: str
+    external_id: Optional[str]
     group_access: Tuple[GroupCollectionAccess, ...]
     member_access: Tuple[MemberCollectionAccess, ...]
 
@@ -294,7 +297,7 @@ class Collection(NamedTuple):
 
         return Collection(
             id=data["collection_id"],
-            external_id=data["external_id"],
+            external_id=data.get("external_id"),
             group_access=group_access,
             member_access=member_access,
         )
@@ -303,8 +306,10 @@ class Collection(NamedTuple):
         lines = [
             "[[collection]]\n",
             f'collection_id = "{self.id}"\n',
-            f'external_id = "{self.external_id}"\n',
         ]
+
+        if self.external_id is not None:
+            lines.append(f'external_id = {json.dumps(self.external_id)}\n')
 
         member_access_lines = [
             "  " + a.format_toml() for a in sorted(self.member_access)
@@ -396,7 +401,8 @@ class BitwardenClient(NamedTuple):
     ) -> Iterable[Collection]:
         collections = json.load(self._http_get(f"/public/collections"))
 
-        for collection in collections["data"]:
+        for i, collection in enumerate(collections["data"]):
+            print_status_stderr(f"[{i+1}/{len(collections['data'])}] Getting collection ...")
             group_accesses: Tuple[GroupCollectionAccess, ...] = tuple()
             member_accesses: Tuple[MemberCollectionAccess, ...] = tuple()
             collection_id = collection["id"]
@@ -432,6 +438,8 @@ class BitwardenClient(NamedTuple):
                 member_access=member_accesses,
                 group_access=group_accesses,
             )
+
+        print_status_stderr("")
 
     def get_group_members(
         self, group_id: str, group_name: str
