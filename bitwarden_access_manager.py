@@ -60,7 +60,7 @@ group_name = "group2"
 collection_id = "50351c20-55b4-4ee8-bbe0-afaf00a8f25d"
 external_id = "collection1"
 member_access = [
-  { member_name = "yan", access = "write"},
+  { email = "yan@chorus.one", access = "write"},
 ]
 
 group_access = [
@@ -72,7 +72,7 @@ group_access = [
 collection_id = "8e69ce49-85ae-4e09-a52c-afaf00a90a3f"
 external_id = ""
 member_access = [
-  { member_name = "yan", access = "write" },
+  { email = "yan@chorus.one", access = "write" },
 ]
 group_access = [
   { group_name = "group1", access = "readonly" },
@@ -225,23 +225,21 @@ class Group(NamedTuple):
 
 
 class MemberCollectionAccess(NamedTuple):
-    member_name: str
+    # We identify members by email, name is not guaranteed to be present.
+    email: str
     access: GroupAccess
 
     @staticmethod
     def from_toml_dict(data: Dict[str, Any]) -> MemberCollectionAccess:
         return MemberCollectionAccess(
-            member_name=data["member_name"],
+            email=data["email"],
             access=GroupAccess[data["access"].upper()],
         )
 
     def format_toml(self) -> str:
         return (
-            '{ member_name = "'
-            + self.member_name
-            + '", access = "'
-            + self.access.name.lower()
-            + '"}'
+            f'{{ email = {json.dumps(self.email)}, '
+            f'access = "{self.access.name.lower()}" }}'
         )
 
 
@@ -428,7 +426,7 @@ class BitwardenClient(NamedTuple):
 
             member_accesses = tuple(sorted(
                 collections_members.get(collection_id, []),
-                key=lambda ma: ma.member_name,
+                key=lambda ma: ma.email,
             ))
 
             yield Collection(
@@ -490,10 +488,10 @@ class BitwardenClient(NamedTuple):
             if type != MemberType.OWNER and type != MemberType.ADMIN:
                 for collection in collections:
                     access = self.map_access(readonly=collection["readOnly"])
-
                     collection_access[collection["id"]].append(
                         MemberCollectionAccess(
-                            member_name=member["name"], access=access
+                            email=member["email"],
+                            access=access,
                         )
                     )
 
