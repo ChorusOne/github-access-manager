@@ -9,7 +9,7 @@
 """
 Github Access Manager
 
-Comare the current state of a GitHub organization against a declarative
+Compare the current state of a GitHub organization against a declarative
 specification of the target state. Currently this tool only points out the
 differences, it does not automatically reconcile them for you.
 
