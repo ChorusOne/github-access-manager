@@ -9,7 +9,7 @@
 """
 Github Access Manager
 
-Comare the current state of a GitHub organization against a declarative
+Compare the current state of a GitHub organization against a declarative
 specification of the target state. Currently this tool only points out the
 differences, it does not automatically reconcile them for you.
 
@@ -876,8 +876,12 @@ class Diff(Generic[T]):
         header_to_add: str,
         header_to_remove: str,
         header_to_change: str,
-    ) -> None:
+    ) -> bool:
+        has_diff = False
+
         if len(self.to_add) > 0:
+            has_diff = True
+
             print(header_to_add)
             for entry in self.to_add:
                 print()
@@ -886,6 +890,8 @@ class Diff(Generic[T]):
             print()
 
         if len(self.to_remove) > 0:
+            has_diff = True
+
             print(header_to_remove)
             for entry in self.to_remove:
                 print()
@@ -894,6 +900,8 @@ class Diff(Generic[T]):
             print()
 
         if len(self.to_change) > 0:
+            has_diff = True
+
             print(header_to_change)
             for change in self.to_change:
                 print()
@@ -904,6 +912,7 @@ class Diff(Generic[T]):
 
             print()
 
+        return has_diff
 
 def print_team_members_diff(
     *,
@@ -911,28 +920,39 @@ def print_team_members_diff(
     target_fname: str,
     target_members: Set[TeamMember],
     actual_members: Set[TeamMember],
-) -> None:
+) -> bool:
+    has_diff = False
     members_diff = Diff.new(
         target=target_members,
         actual=actual_members,
     )
+
     if len(members_diff.to_remove) > 0:
+        has_diff = True
+
         print(
             f"The following members of team '{team_name}' are not specified "
             f"in {target_fname}, but are present on GitHub:\n"
         )
         for member in sorted(members_diff.to_remove):
             print(f"  {member.user_name}")
+
         print()
 
     if len(members_diff.to_add) > 0:
+        has_diff = True
+
         print(
             f"The following members of team '{team_name}' are specified "
             f"in {target_fname}, but are not present on GitHub:\n"
         )
         for member in sorted(members_diff.to_add):
             print(f"  {member.user_name}")
+
         print()
+
+    return has_diff
+
 
 
 def main() -> None:
@@ -951,6 +971,7 @@ def main() -> None:
         print("See also --help.")
         sys.exit(1)
 
+    has_changes = False
     target_fname = sys.argv[1]
     target = Configuration.from_toml_file(target_fname)
     org_name = target.organization.name
@@ -962,7 +983,7 @@ def main() -> None:
         target.get_repository_target(r) for r in actual_repos
     }
     repos_diff = Diff.new(target=target_repos, actual=actual_repos)
-    repos_diff.print_diff(
+    has_changes |= repos_diff.print_diff(
         f"The following repositories are specified in {target_fname} but not present on GitHub:",
         # Even though we generate the targets form the actuals using the default
         # settings, it can happen that we match on repository name but not id
@@ -974,6 +995,7 @@ def main() -> None:
 
     current_org = client.get_organization(org_name)
     if current_org != target.organization:
+        has_changes = True
         print("The organization-level settings need to be changed as follows:\n")
         print_simple_diff(
             actual=current_org.format_toml(),
@@ -982,7 +1004,7 @@ def main() -> None:
 
     current_members = set(client.get_organization_members(org_name))
     members_diff = Diff.new(target=target.members, actual=current_members)
-    members_diff.print_diff(
+    has_changes |= members_diff.print_diff(
         f"The following members are specified in {target_fname} but not a member of the GitHub organization:",
         f"The following members are not specified in {target_fname} but are a member of the GitHub organization:",
         f"The following members on GitHub need to be changed to match {target_fname}:",
@@ -990,7 +1012,7 @@ def main() -> None:
 
     current_teams = set(client.get_organization_teams(org_name))
     teams_diff = Diff.new(target=target.teams, actual=current_teams)
-    teams_diff.print_diff(
+    has_changes |= teams_diff.print_diff(
         f"The following teams specified in {target_fname} are not present on GitHub:",
         f"The following teams are not specified in {target_fname} but are present on GitHub:",
         f"The following teams on GitHub need to be changed to match {target_fname}:",
@@ -1004,7 +1026,7 @@ def main() -> None:
         team for team in current_teams if team.name in target_team_names
     ]
     for team in existing_desired_teams:
-        print_team_members_diff(
+        has_changes |= print_team_members_diff(
             team_name=team.name,
             target_fname=target_fname,
             target_members={
@@ -1012,6 +1034,9 @@ def main() -> None:
             },
             actual_members=set(client.get_team_members(org_name, team)),
         )
+
+    if has_changes:
+        sys.exit(2)
 
 
 if __name__ == "__main__":
