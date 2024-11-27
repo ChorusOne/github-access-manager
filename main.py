@@ -381,9 +381,10 @@ class Configuration(NamedTuple):
     default_repo_settings: Repository
     repos_by_id: Dict[int, Repository]
     repos_by_name: Dict[str, Repository]
+    fname: Optional[str]
 
     @staticmethod
-    def from_toml_dict(data: Dict[str, Any]) -> Configuration:
+    def from_toml_dict(data: Dict[str, Any], fname: Optional[str]) -> Configuration:
         org = Organization.from_toml_dict(data["organization"])
         members = {OrganizationMember.from_toml_dict(m) for m in data["member"]}
         teams = {Team.from_toml_dict(m) for m in data["team"]}
@@ -408,13 +409,14 @@ class Configuration(NamedTuple):
             default_repo_settings=default_repo_settings,
             repos_by_id=repos_by_id,
             repos_by_name=repos_by_name,
+            fname=fname,
         )
 
     @staticmethod
     def from_toml_file(fname: str) -> Configuration:
         with open(fname, "rb") as f:
             data = tomllib.load(f)
-            return Configuration.from_toml_dict(data)
+            return Configuration.from_toml_dict(data, fname)
 
     def get_repository_target(self, actual: Repository) -> Repository:
         """
@@ -955,48 +957,55 @@ def print_team_members_diff(
     return has_diff
 
 
-def has_changes(target: Configuration, client: GithubClient) -> bool:
-    has_changes = False
-    org_name = target.organization.name
-
-    actual_repos = set(client.get_organization_repositories(org_name))
+def diff_repos(target: Configuration, client: GithubClient) -> bool:
+    actual_repos = set(client.get_organization_repositories(target.organization.name))
     target_repos = set(target.repos_by_id.values()) | {
         target.get_repository_target(r) for r in actual_repos
     }
     repos_diff = Diff.new(target=target_repos, actual=actual_repos)
-    has_changes |= repos_diff.print_diff(
-        f"The following repositories are specified in {target_fname} but not present on GitHub:",
+
+    return repos_diff.print_diff(
+        f"The following repositories are specified in {target.fname} but not present on GitHub:",
         # Even though we generate the targets form the actuals using the default
         # settings, it can happen that we match on repository name but not id
         # (when the id in the config file is wrong). Then the repo will be
         # missing from the targets.
-        f"The following repositories are not specified in {target_fname} but present on GitHub:",
-        f"The following repositories on GitHub need to be changed to match {target_fname}:",
+        f"The following repositories are not specified in {target.fname} but present on GitHub:",
+        f"The following repositories on GitHub need to be changed to match {target.fname}:",
     )
 
-    current_org = client.get_organization(org_name)
-    if current_org != target.organization:
-        has_changes = True
+
+def diff_org(target: Configuration, client: GithubClient) -> bool:
+    current_org = client.get_organization(target.organization.name)
+    has_change = current_org != target.organization
+    if has_change:
         print("The organization-level settings need to be changed as follows:\n")
         print_simple_diff(
             actual=current_org.format_toml(),
             target=target.organization.format_toml(),
         )
+    return has_change
 
-    current_members = set(client.get_organization_members(org_name))
+
+def diff_members(target: Configuration, client: GithubClient) -> bool:
+    current_members = set(client.get_organization_members(target.organization.name))
     members_diff = Diff.new(target=target.members, actual=current_members)
-    has_changes |= members_diff.print_diff(
-        f"The following members are specified in {target_fname} but not a member of the GitHub organization:",
-        f"The following members are not specified in {target_fname} but are a member of the GitHub organization:",
-        f"The following members on GitHub need to be changed to match {target_fname}:",
+    return members_diff.print_diff(
+        f"The following members are specified in {target.fname} but not a member of the GitHub organization:",
+        f"The following members are not specified in {target.fname} but are a member of the GitHub organization:",
+        f"The following members on GitHub need to be changed to match {target.fname}:",
     )
 
-    current_teams = set(client.get_organization_teams(org_name))
+
+def diff_teams(target: Configuration, client: GithubClient) -> bool:
+    has_changes = False
+
+    current_teams = set(client.get_organization_teams(target.organization.name))
     teams_diff = Diff.new(target=target.teams, actual=current_teams)
     has_changes |= teams_diff.print_diff(
-        f"The following teams specified in {target_fname} are not present on GitHub:",
-        f"The following teams are not specified in {target_fname} but are present on GitHub:",
-        f"The following teams on GitHub need to be changed to match {target_fname}:",
+        f"The following teams specified in {target.fname} are not present on GitHub:",
+        f"The following teams are not specified in {target.fname} but are present on GitHub:",
+        f"The following teams on GitHub need to be changed to match {target.fname}:",
     )
 
     # For all the teams which we want to exist, and which do actually exist,
@@ -1009,12 +1018,22 @@ def has_changes(target: Configuration, client: GithubClient) -> bool:
     for team in existing_desired_teams:
         has_changes |= print_team_members_diff(
             team_name=team.name,
-            target_fname=target_fname,
+            target_fname=target.fname,
             target_members={
                 m for m in target.team_memberships if m.team_name == team.name
             },
-            actual_members=set(client.get_team_members(org_name, team)),
+            actual_members=set(client.get_team_members(target.organization.name, team)),
         )
+
+    return has_changes
+
+
+def has_changes(target: Configuration, client: GithubClient) -> bool:
+    has_changes = False
+    has_changes |= diff_repos(target, client)
+    has_changes |= diff_org(target, client)
+    has_changes |= diff_members(target, client)
+    has_changes |= diff_teams(target, client)
 
     return has_changes
 
