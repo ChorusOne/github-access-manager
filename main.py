@@ -659,6 +659,35 @@ class GithubClient(NamedTuple):
                     f"Got {response.status} from {next_url!r}: {body!r}", response
                 )
 
+    def _http_graphql(self, query: str, variables: dict[str, Any] = {}):
+        request_body = json.dumps({
+            "query": query,
+            "variables": variables
+        })
+
+        self.connection.request(
+            method="POST",
+            url="/graphql",
+            headers={
+                "Authorization": f"token {self.github_token}",
+                "Accept": "application/vnd.github.v3+json",
+                "User-Agent": "Github Access Manager",
+            },
+            body=request_body
+        )
+        # TODO: see _http_get() regarding unimplemented headers
+
+        with self.connection.getresponse() as response:
+            if 200 <= response.status < 300:
+                json_response = json.load(response)
+                if "errors" in json_response:
+                    errors = json_response['errors']
+                    raise Exception("Got GraphQL errors", errors)
+                return json_response['data']
+
+            body = response.read()
+            raise Exception(f"Got {response.status} from {url!r}: {body!r}", response)
+
     def get_organization(self, org: str) -> Organization:
         org_data: Dict[str, Any] = self._http_get_json(f"/orgs/{org}")
         default_repo_permission: str = org_data["default_repository_permission"]
