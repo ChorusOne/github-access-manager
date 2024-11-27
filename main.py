@@ -761,7 +761,7 @@ class GithubClient(NamedTuple):
         n = len(repos)
         for i, repo in enumerate(repos):
             name = repo["name"]
-            print_status_stderr(f"[{i+1} / {n}] Getting access on {name}")
+            print_status_stderr(f"[{i + 1} / {n}] Getting access on {name}")
             user_access = tuple(sorted(self.get_repository_users(org, name)))
             team_access = tuple(sorted(self.get_repository_teams(org, name)))
             yield Repository(
@@ -914,6 +914,7 @@ class Diff(Generic[T]):
 
         return has_diff
 
+
 def print_team_members_diff(
     *,
     team_name: str,
@@ -952,7 +953,6 @@ def print_team_members_diff(
         print()
 
     return has_diff
-
 
 
 def main() -> None:
