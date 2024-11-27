@@ -140,6 +140,7 @@ from typing import (
     Protocol,
 )
 from enum import Enum
+from collections import defaultdict
 from difflib import SequenceMatcher
 from http.client import HTTPSConnection, HTTPResponse
 from dataclasses import dataclass
@@ -757,62 +758,143 @@ class GithubClient(NamedTuple):
                 team_name=team.name,
             )
 
-    def get_repository_teams(
-        self, org: str, repo: str
-    ) -> Iterable[TeamRepositoryAccess]:
-        teams = self._http_get_json_paginated(f"/repos/{org}/{repo}/teams")
-        for team in teams:
-            permissions: Dict[str, bool] = team["permissions"]
-            yield TeamRepositoryAccess(
-                team_name=team["name"],
-                role=RepositoryAccessRole.from_permissions_dict(permissions),
-            )
+    def get_organization_repo_to_teams_map(self, org: str) -> dict[str, [TeamRepositoryaccess]]:
+        query = """
+            query($org: String!, $cursor: String) {
+              organization(login: $org) {
+                teams(first: 100) {
+                  nodes {
+                    name
+                    repositories(first: 100, after: $cursor) {
+                      edges {
+                        permission
+                        node {
+                          databaseId
+                        }
+                      }
+                      pageInfo {
+                        hasNextPage
+                        endCursor
+                      }
+                      totalCount
+                    }
+                  }
+                  pageInfo {
+                    hasNextPage
+                  }
+                }
+              }
+            }
+        """
 
-    def get_repository_users(
-        self, org: str, repo: str
-    ) -> Iterable[UserRepositoryAccess]:
-        # We query with affiliation=direct to get all users that have explicit
-        # access to the repository (i.e. not those who have implicit access
-        # through being a member of a group). The default is affiliation=all,
-        # which also returns users with implicit access.
-        users = self._http_get_json_paginated(f"/repos/{org}/{repo}/collaborators?affiliation=direct")
-        for user in users:
-            permissions: Dict[str, bool] = user["permissions"]
-            yield UserRepositoryAccess(
-                user_id=user["id"],
-                user_name=user["login"],
-                role=RepositoryAccessRole.from_permissions_dict(permissions),
-            )
+        repo_to_teams: defaultdict[str, [TeamRepositoryaccess]] = defaultdict(list)
+
+        cursor = None
+        while True:
+            variables = { "org": org, "cursor": cursor }
+            response = self._http_graphql(query, variables)
+
+            teams = response['organization']['teams']
+            # Assume we have less than 100 teams and skip pagination
+            assert(teams['pageInfo']['hasNextPage'] == False)
+
+            has_next_page = False
+            next_cursors = []
+
+            for team in teams['nodes']:
+                for repo in team['repositories']['edges']:
+                    repo_to_teams[repo['node']['databaseId']].append(TeamRepositoryAccess(
+                        team_name=team['name'],
+                        role=RepositoryAccessRole(repo['permission'].lower())
+                    ))
+
+                team_has_next_page = team['repositories']['pageInfo']['hasNextPage']
+                has_next_page |= team_has_next_page
+                if team_has_next_page:
+                    next_cursors.append(team['repositories']['pageInfo']['endCursor'])
+
+            if not has_next_page:
+                break
+
+            [cursor] = set(next_cursors) # Asserts that all next cursors are the same
+
+        print(json.dumps({ key: [team.team_name for team in teams] for key, teams in repo_to_teams.items()}))
+        return dict(repo_to_teams)
 
     def get_organization_repositories(self, org: str) -> Iterable[Repository]:
-        # Listing repositories is a slow endpoint, and paginated as well, print
-        # some progress. Technically from the pagination headers we could
-        # extract more precise progress, but I am not going to bother.
-        print_status_stderr("[1 / ??] Listing organization repositories")
-        repos = []
-        for i, more_repos in enumerate(
-            self._http_get_json_paginated(f"/orgs/{org}/repos?per_page=100")
-        ):
-            repos.append(more_repos)
-            print_status_stderr(
-                f"[{len(repos)} / ??] Listing organization repositories"
-            )
-        # Materialize to a list so we know the total so we can show a progress
-        # counter.
-        n = len(repos)
-        for i, repo in enumerate(repos):
-            name = repo["name"]
-            print_status_stderr(f"[{i + 1} / {n}] Getting access on {name}")
-            user_access = tuple(sorted(self.get_repository_users(org, name)))
-            team_access = tuple(sorted(self.get_repository_teams(org, name)))
-            yield Repository(
-                repo_id=repo["id"],
-                name=name,
-                visibility=RepositoryVisibility(repo["visibility"]),
-                user_access=user_access,
-                team_access=team_access,
-            )
-        print_status_stderr("")
+        query = """
+            query($org: String!, $cursor: String) {
+              organization(login: $org) {
+                repositories(first:100, after: $cursor) {
+                  nodes {
+                    databaseId
+                    name
+                    visibility
+                    # We query with affiliation=direct to get all users that have explicit
+                    # access to the repository (i.e. not those who have implicit access
+                    # through being a member of a group). The default is affiliation=all,
+                    # which also returns users with implicit access.
+                    collaborators(affiliation: DIRECT, first: 100) {
+                      edges {
+                        node {
+                          databaseId
+                          login
+                        }
+                        permission
+                      }
+                      pageInfo {
+                        hasNextPage
+                      }
+                    }
+                  }
+                  pageInfo {
+                    hasNextPage
+                    endCursor
+                  }
+                  totalCount
+                }
+              }
+            }
+        """
+
+        repo_to_teams = self.get_organization_repo_to_teams_map(org)
+
+        cursor = None
+        while True:
+            variables = { "org": org, "cursor": cursor }
+            print(f"shooting repositories query for cursor {cursor}")
+            response = self._http_graphql(query, variables)
+
+            repos = response['organization']['repositories']
+
+            for repo in repos['nodes']:
+                repo_id = repo['databaseId']
+
+                collaborators = repo['collaborators']
+                # Assume we have less than 100 directs collaborators to any repo and skip pagination
+                assert(collaborators['pageInfo']['hasNextPage'] == False)
+                user_access = tuple(sorted(UserRepositoryAccess(
+                    user_id=collaborator['node']['databaseId'],
+                    user_name=collaborator['node']['login'],
+                    role=RepositoryAccessRole(collaborator['permission'].lower()),
+                ) for collaborator in collaborators['edges']))
+
+                if repo_id == 733475299:
+                    print(f"BLEHBLEH {repo['name']}")
+                team_access = tuple(sorted(repo_to_teams.get(repo_id, [])))
+
+                yield Repository(
+                    repo_id=repo_id,
+                    name=repo['name'],
+                    visibility=RepositoryVisibility(repo["visibility"].lower()),
+                    user_access=user_access,
+                    team_access=team_access,
+                )
+
+            page_info = repos['pageInfo']
+            if not page_info['hasNextPage']:
+                break
+            cursor = page_info['endCursor']
 
 
 def print_indented(lines: str) -> None:
