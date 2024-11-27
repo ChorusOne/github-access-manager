@@ -699,28 +699,38 @@ class GithubClient(NamedTuple):
         )
 
     def get_organization_members(self, org: str) -> Iterable[OrganizationMember]:
-        # Collect the members into a list first, so we can show an accurate
-        # progress meter later.
-        members = list(self._http_get_json_paginated(f"/orgs/{org}/members"))
-        for i, member in enumerate(members):
-            username: str = member["login"]
-            print_status_stderr(
-                f"[{i + 1} / {len(members)}] Retrieving membership: {username}",
-            )
-            membership: Dict[str, Any] = self._http_get_json(
-                f"/orgs/{org}/memberships/{username}"
-            )
-            yield OrganizationMember(
-                user_name=username,
-                user_id=member["id"],
-                role=OrganizationRole(membership["role"]),
-            )
+        query = """
+            query($org: String!) {
+              organization(login: $org) {
+                membersWithRole(first:100) {
+                  edges {
+                    node {
+                      login
+                      databaseId
+                    }
+                    role
+                  }
+                  pageInfo {
+                    hasNextPage
+                  }
+                }
+              }
+            }
+        """
+        variables = { "org": org }
+        response = self._http_graphql(query, variables)
 
-        # After the final status update, clear the line again, so the final
-        # output is not mixed with status updates. (They go separately to stdout
-        # and stderr anyway, but in a terminal you don’t want interleaved
-        # output.)
-        print_status_stderr("")
+        members_with_role = response['organization']['membersWithRole']
+        # TODO: Support more than 100 team members
+        assert(members_with_role['pageInfo']['hasNextPage'] == False)
+
+        for edge in members_with_role['edges']:
+            node = edge['node']
+            yield OrganizationMember(
+                user_name=node['login'],
+                user_id=node['databaseId'],
+                role=OrganizationRole(edge['role'].lower()),
+            )
 
     def get_organization_teams(self, org: str) -> Iterable[Team]:
         teams = self._http_get_json_paginated(f"/orgs/{org}/teams")
