@@ -955,28 +955,9 @@ def print_team_members_diff(
     return has_diff
 
 
-def main() -> None:
-    if "--help" in sys.argv:
-        print(__doc__)
-        sys.exit(0)
-
-    github_token = os.getenv("GITHUB_TOKEN")
-    if github_token is None:
-        print("Expected GITHUB_TOKEN environment variable to be set.")
-        print("See also --help.")
-        sys.exit(1)
-
-    if len(sys.argv) < 2:
-        print("Expected file name of config toml as first argument.")
-        print("See also --help.")
-        sys.exit(1)
-
+def has_changes(target: Configuration, client: GithubClient) -> bool:
     has_changes = False
-    target_fname = sys.argv[1]
-    target = Configuration.from_toml_file(target_fname)
     org_name = target.organization.name
-
-    client = GithubClient.new(github_token)
 
     actual_repos = set(client.get_organization_repositories(org_name))
     target_repos = set(target.repos_by_id.values()) | {
@@ -1035,7 +1016,29 @@ def main() -> None:
             actual_members=set(client.get_team_members(org_name, team)),
         )
 
-    if has_changes:
+    return has_changes
+
+
+def main() -> None:
+    if "--help" in sys.argv:
+        print(__doc__)
+        sys.exit(0)
+
+    if len(sys.argv) < 2:
+        print("Expected file name of config toml as first argument.")
+        print("See also --help.")
+        sys.exit(1)
+    target_fname = sys.argv[1]
+    target = Configuration.from_toml_file(target_fname)
+
+    github_token = os.getenv("GITHUB_TOKEN")
+    if github_token is None:
+        print("Expected GITHUB_TOKEN environment variable to be set.")
+        print("See also --help.")
+        sys.exit(1)
+    client = GithubClient.new(github_token)
+
+    if has_changes(target, client):
         sys.exit(2)
 
 
