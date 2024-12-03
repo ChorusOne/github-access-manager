@@ -140,6 +140,7 @@ from typing import (
     Protocol,
 )
 from enum import Enum
+from collections import defaultdict
 from difflib import SequenceMatcher
 from http.client import HTTPSConnection, HTTPResponse
 from dataclasses import dataclass
@@ -381,9 +382,10 @@ class Configuration(NamedTuple):
     default_repo_settings: Repository
     repos_by_id: Dict[int, Repository]
     repos_by_name: Dict[str, Repository]
+    fname: Optional[str]
 
     @staticmethod
-    def from_toml_dict(data: Dict[str, Any]) -> Configuration:
+    def from_toml_dict(data: Dict[str, Any], fname: Optional[str]) -> Configuration:
         org = Organization.from_toml_dict(data["organization"])
         members = {OrganizationMember.from_toml_dict(m) for m in data["member"]}
         teams = {Team.from_toml_dict(m) for m in data["team"]}
@@ -408,13 +410,14 @@ class Configuration(NamedTuple):
             default_repo_settings=default_repo_settings,
             repos_by_id=repos_by_id,
             repos_by_name=repos_by_name,
+            fname=fname,
         )
 
     @staticmethod
     def from_toml_file(fname: str) -> Configuration:
         with open(fname, "rb") as f:
             data = tomllib.load(f)
-            return Configuration.from_toml_dict(data)
+            return Configuration.from_toml_dict(data, fname)
 
     def get_repository_target(self, actual: Repository) -> Repository:
         """
@@ -657,6 +660,35 @@ class GithubClient(NamedTuple):
                     f"Got {response.status} from {next_url!r}: {body!r}", response
                 )
 
+    def _http_graphql(self, query: str, variables: dict[str, Any] = {}):
+        request_body = json.dumps({
+            "query": query,
+            "variables": variables
+        })
+
+        self.connection.request(
+            method="POST",
+            url="/graphql",
+            headers={
+                "Authorization": f"token {self.github_token}",
+                "Accept": "application/vnd.github.v3+json",
+                "User-Agent": "Github Access Manager",
+            },
+            body=request_body
+        )
+        # TODO: see _http_get() regarding unimplemented headers
+
+        with self.connection.getresponse() as response:
+            if 200 <= response.status < 300:
+                json_response = json.load(response)
+                if "errors" in json_response:
+                    errors = json_response['errors']
+                    raise Exception("Got GraphQL errors", errors)
+                return json_response['data']
+
+            body = response.read()
+            raise Exception(f"Got {response.status} from {url!r}: {body!r}", response)
+
     def get_organization(self, org: str) -> Organization:
         org_data: Dict[str, Any] = self._http_get_json(f"/orgs/{org}")
         default_repo_permission: str = org_data["default_repository_permission"]
@@ -668,28 +700,38 @@ class GithubClient(NamedTuple):
         )
 
     def get_organization_members(self, org: str) -> Iterable[OrganizationMember]:
-        # Collect the members into a list first, so we can show an accurate
-        # progress meter later.
-        members = list(self._http_get_json_paginated(f"/orgs/{org}/members"))
-        for i, member in enumerate(members):
-            username: str = member["login"]
-            print_status_stderr(
-                f"[{i + 1} / {len(members)}] Retrieving membership: {username}",
-            )
-            membership: Dict[str, Any] = self._http_get_json(
-                f"/orgs/{org}/memberships/{username}"
-            )
-            yield OrganizationMember(
-                user_name=username,
-                user_id=member["id"],
-                role=OrganizationRole(membership["role"]),
-            )
+        query = """
+            query($org: String!) {
+              organization(login: $org) {
+                membersWithRole(first:100) {
+                  edges {
+                    node {
+                      login
+                      databaseId
+                    }
+                    role
+                  }
+                  pageInfo {
+                    hasNextPage
+                  }
+                }
+              }
+            }
+        """
+        variables = { "org": org }
+        response = self._http_graphql(query, variables)
 
-        # After the final status update, clear the line again, so the final
-        # output is not mixed with status updates. (They go separately to stdout
-        # and stderr anyway, but in a terminal you don’t want interleaved
-        # output.)
-        print_status_stderr("")
+        members_with_role = response['organization']['membersWithRole']
+        # TODO: Support more than 100 team members
+        assert(members_with_role['pageInfo']['hasNextPage'] == False)
+
+        for edge in members_with_role['edges']:
+            node = edge['node']
+            yield OrganizationMember(
+                user_name=node['login'],
+                user_id=node['databaseId'],
+                role=OrganizationRole(edge['role'].lower()),
+            )
 
     def get_organization_teams(self, org: str) -> Iterable[Team]:
         teams = self._http_get_json_paginated(f"/orgs/{org}/teams")
@@ -716,62 +758,143 @@ class GithubClient(NamedTuple):
                 team_name=team.name,
             )
 
-    def get_repository_teams(
-        self, org: str, repo: str
-    ) -> Iterable[TeamRepositoryAccess]:
-        teams = self._http_get_json_paginated(f"/repos/{org}/{repo}/teams")
-        for team in teams:
-            permissions: Dict[str, bool] = team["permissions"]
-            yield TeamRepositoryAccess(
-                team_name=team["name"],
-                role=RepositoryAccessRole.from_permissions_dict(permissions),
-            )
+    def get_organization_repo_to_teams_map(self, org: str) -> dict[str, [TeamRepositoryaccess]]:
+        query = """
+            query($org: String!, $cursor: String) {
+              organization(login: $org) {
+                teams(first: 100) {
+                  nodes {
+                    name
+                    repositories(first: 100, after: $cursor) {
+                      edges {
+                        permission
+                        node {
+                          databaseId
+                        }
+                      }
+                      pageInfo {
+                        hasNextPage
+                        endCursor
+                      }
+                      totalCount
+                    }
+                  }
+                  pageInfo {
+                    hasNextPage
+                  }
+                }
+              }
+            }
+        """
 
-    def get_repository_users(
-        self, org: str, repo: str
-    ) -> Iterable[UserRepositoryAccess]:
-        # We query with affiliation=direct to get all users that have explicit
-        # access to the repository (i.e. not those who have implicit access
-        # through being a member of a group). The default is affiliation=all,
-        # which also returns users with implicit access.
-        users = self._http_get_json_paginated(f"/repos/{org}/{repo}/collaborators?affiliation=direct")
-        for user in users:
-            permissions: Dict[str, bool] = user["permissions"]
-            yield UserRepositoryAccess(
-                user_id=user["id"],
-                user_name=user["login"],
-                role=RepositoryAccessRole.from_permissions_dict(permissions),
-            )
+        repo_to_teams: defaultdict[str, [TeamRepositoryaccess]] = defaultdict(list)
+
+        cursor = None
+        while True:
+            variables = { "org": org, "cursor": cursor }
+            response = self._http_graphql(query, variables)
+
+            teams = response['organization']['teams']
+            # Assume we have less than 100 teams and skip pagination
+            assert(teams['pageInfo']['hasNextPage'] == False)
+
+            has_next_page = False
+            next_cursors = []
+
+            for team in teams['nodes']:
+                for repo in team['repositories']['edges']:
+                    repo_to_teams[repo['node']['databaseId']].append(TeamRepositoryAccess(
+                        team_name=team['name'],
+                        role=RepositoryAccessRole(repo['permission'].lower())
+                    ))
+
+                team_has_next_page = team['repositories']['pageInfo']['hasNextPage']
+                has_next_page |= team_has_next_page
+                if team_has_next_page:
+                    next_cursors.append(team['repositories']['pageInfo']['endCursor'])
+
+            if not has_next_page:
+                break
+
+            [cursor] = set(next_cursors) # Asserts that all next cursors are the same
+
+        print(json.dumps({ key: [team.team_name for team in teams] for key, teams in repo_to_teams.items()}))
+        return dict(repo_to_teams)
 
     def get_organization_repositories(self, org: str) -> Iterable[Repository]:
-        # Listing repositories is a slow endpoint, and paginated as well, print
-        # some progress. Technically from the pagination headers we could
-        # extract more precise progress, but I am not going to bother.
-        print_status_stderr("[1 / ??] Listing organization repositories")
-        repos = []
-        for i, more_repos in enumerate(
-            self._http_get_json_paginated(f"/orgs/{org}/repos?per_page=100")
-        ):
-            repos.append(more_repos)
-            print_status_stderr(
-                f"[{len(repos)} / ??] Listing organization repositories"
-            )
-        # Materialize to a list so we know the total so we can show a progress
-        # counter.
-        n = len(repos)
-        for i, repo in enumerate(repos):
-            name = repo["name"]
-            print_status_stderr(f"[{i+1} / {n}] Getting access on {name}")
-            user_access = tuple(sorted(self.get_repository_users(org, name)))
-            team_access = tuple(sorted(self.get_repository_teams(org, name)))
-            yield Repository(
-                repo_id=repo["id"],
-                name=name,
-                visibility=RepositoryVisibility(repo["visibility"]),
-                user_access=user_access,
-                team_access=team_access,
-            )
-        print_status_stderr("")
+        query = """
+            query($org: String!, $cursor: String) {
+              organization(login: $org) {
+                repositories(first:100, after: $cursor) {
+                  nodes {
+                    databaseId
+                    name
+                    visibility
+                    # We query with affiliation=direct to get all users that have explicit
+                    # access to the repository (i.e. not those who have implicit access
+                    # through being a member of a group). The default is affiliation=all,
+                    # which also returns users with implicit access.
+                    collaborators(affiliation: DIRECT, first: 100) {
+                      edges {
+                        node {
+                          databaseId
+                          login
+                        }
+                        permission
+                      }
+                      pageInfo {
+                        hasNextPage
+                      }
+                    }
+                  }
+                  pageInfo {
+                    hasNextPage
+                    endCursor
+                  }
+                  totalCount
+                }
+              }
+            }
+        """
+
+        repo_to_teams = self.get_organization_repo_to_teams_map(org)
+
+        cursor = None
+        while True:
+            variables = { "org": org, "cursor": cursor }
+            print(f"shooting repositories query for cursor {cursor}")
+            response = self._http_graphql(query, variables)
+
+            repos = response['organization']['repositories']
+
+            for repo in repos['nodes']:
+                repo_id = repo['databaseId']
+
+                collaborators = repo['collaborators']
+                # Assume we have less than 100 directs collaborators to any repo and skip pagination
+                assert(collaborators['pageInfo']['hasNextPage'] == False)
+                user_access = tuple(sorted(UserRepositoryAccess(
+                    user_id=collaborator['node']['databaseId'],
+                    user_name=collaborator['node']['login'],
+                    role=RepositoryAccessRole(collaborator['permission'].lower()),
+                ) for collaborator in collaborators['edges']))
+
+                if repo_id == 733475299:
+                    print(f"BLEHBLEH {repo['name']}")
+                team_access = tuple(sorted(repo_to_teams.get(repo_id, [])))
+
+                yield Repository(
+                    repo_id=repo_id,
+                    name=repo['name'],
+                    visibility=RepositoryVisibility(repo["visibility"].lower()),
+                    user_access=user_access,
+                    team_access=team_access,
+                )
+
+            page_info = repos['pageInfo']
+            if not page_info['hasNextPage']:
+                break
+            cursor = page_info['endCursor']
 
 
 def print_indented(lines: str) -> None:
@@ -914,6 +1037,7 @@ class Diff(Generic[T]):
 
         return has_diff
 
+
 def print_team_members_diff(
     *,
     team_name: str,
@@ -954,68 +1078,55 @@ def print_team_members_diff(
     return has_diff
 
 
-
-def main() -> None:
-    if "--help" in sys.argv:
-        print(__doc__)
-        sys.exit(0)
-
-    github_token = os.getenv("GITHUB_TOKEN")
-    if github_token is None:
-        print("Expected GITHUB_TOKEN environment variable to be set.")
-        print("See also --help.")
-        sys.exit(1)
-
-    if len(sys.argv) < 2:
-        print("Expected file name of config toml as first argument.")
-        print("See also --help.")
-        sys.exit(1)
-
-    has_changes = False
-    target_fname = sys.argv[1]
-    target = Configuration.from_toml_file(target_fname)
-    org_name = target.organization.name
-
-    client = GithubClient.new(github_token)
-
-    actual_repos = set(client.get_organization_repositories(org_name))
+def diff_repos(target: Configuration, client: GithubClient) -> bool:
+    actual_repos = set(client.get_organization_repositories(target.organization.name))
     target_repos = set(target.repos_by_id.values()) | {
         target.get_repository_target(r) for r in actual_repos
     }
     repos_diff = Diff.new(target=target_repos, actual=actual_repos)
-    has_changes |= repos_diff.print_diff(
-        f"The following repositories are specified in {target_fname} but not present on GitHub:",
+
+    return repos_diff.print_diff(
+        f"The following repositories are specified in {target.fname} but not present on GitHub:",
         # Even though we generate the targets form the actuals using the default
         # settings, it can happen that we match on repository name but not id
         # (when the id in the config file is wrong). Then the repo will be
         # missing from the targets.
-        f"The following repositories are not specified in {target_fname} but present on GitHub:",
-        f"The following repositories on GitHub need to be changed to match {target_fname}:",
+        f"The following repositories are not specified in {target.fname} but present on GitHub:",
+        f"The following repositories on GitHub need to be changed to match {target.fname}:",
     )
 
-    current_org = client.get_organization(org_name)
-    if current_org != target.organization:
-        has_changes = True
+
+def diff_org(target: Configuration, client: GithubClient) -> bool:
+    current_org = client.get_organization(target.organization.name)
+    has_change = current_org != target.organization
+    if has_change:
         print("The organization-level settings need to be changed as follows:\n")
         print_simple_diff(
             actual=current_org.format_toml(),
             target=target.organization.format_toml(),
         )
+    return has_change
 
-    current_members = set(client.get_organization_members(org_name))
+
+def diff_members(target: Configuration, client: GithubClient) -> bool:
+    current_members = set(client.get_organization_members(target.organization.name))
     members_diff = Diff.new(target=target.members, actual=current_members)
-    has_changes |= members_diff.print_diff(
-        f"The following members are specified in {target_fname} but not a member of the GitHub organization:",
-        f"The following members are not specified in {target_fname} but are a member of the GitHub organization:",
-        f"The following members on GitHub need to be changed to match {target_fname}:",
+    return members_diff.print_diff(
+        f"The following members are specified in {target.fname} but not a member of the GitHub organization:",
+        f"The following members are not specified in {target.fname} but are a member of the GitHub organization:",
+        f"The following members on GitHub need to be changed to match {target.fname}:",
     )
 
-    current_teams = set(client.get_organization_teams(org_name))
+
+def diff_teams(target: Configuration, client: GithubClient) -> bool:
+    has_changes = False
+
+    current_teams = set(client.get_organization_teams(target.organization.name))
     teams_diff = Diff.new(target=target.teams, actual=current_teams)
     has_changes |= teams_diff.print_diff(
-        f"The following teams specified in {target_fname} are not present on GitHub:",
-        f"The following teams are not specified in {target_fname} but are present on GitHub:",
-        f"The following teams on GitHub need to be changed to match {target_fname}:",
+        f"The following teams specified in {target.fname} are not present on GitHub:",
+        f"The following teams are not specified in {target.fname} but are present on GitHub:",
+        f"The following teams on GitHub need to be changed to match {target.fname}:",
     )
 
     # For all the teams which we want to exist, and which do actually exist,
@@ -1028,14 +1139,46 @@ def main() -> None:
     for team in existing_desired_teams:
         has_changes |= print_team_members_diff(
             team_name=team.name,
-            target_fname=target_fname,
+            target_fname=target.fname,
             target_members={
                 m for m in target.team_memberships if m.team_name == team.name
             },
-            actual_members=set(client.get_team_members(org_name, team)),
+            actual_members=set(client.get_team_members(target.organization.name, team)),
         )
 
-    if has_changes:
+    return has_changes
+
+
+def has_changes(target: Configuration, client: GithubClient) -> bool:
+    has_changes = False
+    has_changes |= diff_repos(target, client)
+    has_changes |= diff_org(target, client)
+    has_changes |= diff_members(target, client)
+    has_changes |= diff_teams(target, client)
+
+    return has_changes
+
+
+def main() -> None:
+    if "--help" in sys.argv:
+        print(__doc__)
+        sys.exit(0)
+
+    if len(sys.argv) < 2:
+        print("Expected file name of config toml as first argument.")
+        print("See also --help.")
+        sys.exit(1)
+    target_fname = sys.argv[1]
+    target = Configuration.from_toml_file(target_fname)
+
+    github_token = os.getenv("GITHUB_TOKEN")
+    if github_token is None:
+        print("Expected GITHUB_TOKEN environment variable to be set.")
+        print("See also --help.")
+        sys.exit(1)
+    client = GithubClient.new(github_token)
+
+    if has_changes(target, client):
         sys.exit(2)
 
 
